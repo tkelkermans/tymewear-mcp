@@ -1,0 +1,83 @@
+"""Tests for activity tools."""
+
+from unittest.mock import AsyncMock
+
+import pytest
+
+from tymewear_mcp.tools.activities import (
+    delete_activity, get_activities, get_activity,
+    get_activity_status, get_pinned_activity, pin_activity,
+)
+
+SAMPLE_ACTIVITY = {
+    "id": "abc-123", "name": "Morning Ride", "type": "0",
+    "type_display": "Normal Activity", "sport": "2", "sport_display": "Bike",
+    "time_stamp": "2025 Jan 15 10:00:00", "duration": "01:30:00",
+    "duration_seconds": 5400, "pinned": False, "algo_status": "success",
+}
+
+
+class TestGetActivities:
+    async def test_list_activities(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={
+            "next": None, "previous": None, "results": [SAMPLE_ACTIVITY],
+        })
+        mock_client.sanitize = lambda d: d
+        result = await get_activities(mock_client, user_id=99999, sport=2, limit=10)
+        mock_client.get.assert_called_once()
+        call_kwargs = mock_client.get.call_args
+        assert "user=99999" in str(call_kwargs) or "99999" in str(call_kwargs)
+        assert len(result["results"]) == 1
+
+    async def test_list_activities_no_sport_filter(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={"next": None, "previous": None, "results": []})
+        mock_client.sanitize = lambda d: d
+        await get_activities(mock_client, user_id=99999)
+
+
+class TestGetActivity:
+    async def test_get_single_activity(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=SAMPLE_ACTIVITY)
+        mock_client.sanitize = lambda d: d
+        result = await get_activity(mock_client, "abc-123")
+        mock_client.get.assert_called_once_with("/v2/api/activities/abc-123/")
+        assert result["sport_display"] == "Bike"
+
+
+class TestGetActivityStatus:
+    async def test_get_status(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={"status": "success"})
+        mock_client.sanitize = lambda d: d
+        result = await get_activity_status(mock_client, "abc-123")
+        mock_client.get.assert_called_once_with("/v2/api/activities/abc-123/status/")
+
+
+class TestPinActivity:
+    async def test_pin(self):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value={"pinned": True})
+        mock_client.sanitize = lambda d: d
+        result = await pin_activity(mock_client, "abc-123")
+        mock_client.post.assert_called_once_with("/api/activities/abc-123/pin/")
+
+
+class TestGetPinnedActivity:
+    async def test_get_pinned(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={"id": "abc-123", "pinned": True})
+        mock_client.sanitize = lambda d: d
+        result = await get_pinned_activity(mock_client, user_id=99999)
+        mock_client.get.assert_called_once_with("/api/users/99999/pinned-activity/")
+
+
+class TestDeleteActivity:
+    async def test_delete(self):
+        mock_client = AsyncMock()
+        mock_client.delete = AsyncMock(return_value=None)
+        result = await delete_activity(mock_client, "abc-123")
+        mock_client.delete.assert_called_once_with("/v2/api/activities/abc-123/")
+        assert result["status"] == "deleted"
