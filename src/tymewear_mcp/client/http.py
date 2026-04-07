@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 import httpx
+from httpx import Response
 
 logger = logging.getLogger(__name__)
 
@@ -101,11 +102,38 @@ class TymeClient:
             return None
         return resp.json()
 
+    async def _request_raw(self, method: str, path: str, **kwargs: Any) -> Response:
+        """Make an authenticated request and return the raw httpx Response."""
+        await self._rate_limit()
+        await self._ensure_token()
+        headers = self._auth_headers()
+        kwargs.setdefault("headers", {}).update(headers)
+
+        resp = await getattr(self._http, method)(path, **kwargs)
+
+        if resp.status_code == 401:
+            logger.debug("Got 401, attempting re-authentication")
+            async with self._auth_lock:
+                refreshed = await self._refresh()
+                if not refreshed:
+                    self._token = None
+                    await self._signin()
+            kwargs["headers"].update(self._auth_headers())
+            await self._rate_limit()
+            resp = await getattr(self._http, method)(path, **kwargs)
+
+        if resp.status_code >= 400:
+            resp.raise_for_status()
+        return resp
+
     async def get(self, path: str, **kwargs: Any) -> Any:
         return await self._request("get", path, **kwargs)
 
     async def post(self, path: str, **kwargs: Any) -> Any:
         return await self._request("post", path, **kwargs)
+
+    async def post_raw(self, path: str, **kwargs: Any) -> Response:
+        return await self._request_raw("post", path, **kwargs)
 
     async def patch(self, path: str, **kwargs: Any) -> Any:
         return await self._request("patch", path, **kwargs)
