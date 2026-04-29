@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import httpx
 from httpx import Response
 
 from tymewear_mcp.client.http import TymeClient
@@ -58,5 +59,10 @@ async def export_csv_full(client: TymeClient, activity_id: str) -> dict[str, Any
 
 
 async def export_fit(client: TymeClient, activity_id: str) -> dict[str, Any]:
-    resp = await client.post_raw("/v2/api/activities/export-fit/", json={"activity_id": activity_id})
+    try:
+        resp = await client.post_raw("/v2/api/activities/export-fit/", json={"activity_id": activity_id})
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code not in {403, 404}:
+            raise
+        resp = await client.get_raw(f"/api/activities/{activity_id}/fit/")
     return _save_export(resp, activity_id, "fit")

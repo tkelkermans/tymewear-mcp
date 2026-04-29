@@ -80,3 +80,20 @@ class TestExportFit:
         mock_client.sanitize = lambda d: d
         result = await export_fit(mock_client, "abc-123")
         assert result == {"url": "https://s3.example.com/file.fit"}
+
+    async def test_export_fit_falls_back_to_dashboard_get(self, tmp_path, monkeypatch):
+        import httpx
+
+        monkeypatch.setattr("tymewear_mcp.tools.exports.EXPORT_DIR", tmp_path)
+        request = httpx.Request("POST", "https://api.tymewear.com/v2/api/activities/export-fit/")
+        response = httpx.Response(404, json={"detail": "Not found."}, request=request)
+        mock_client = AsyncMock()
+        mock_client.post_raw = AsyncMock(side_effect=httpx.HTTPStatusError("Not found", request=request, response=response))
+        mock_client.get_raw = AsyncMock(return_value=_make_fit_response())
+
+        result = await export_fit(mock_client, "abc-12345")
+
+        mock_client.post_raw.assert_called_once_with("/v2/api/activities/export-fit/", json={"activity_id": "abc-12345"})
+        mock_client.get_raw.assert_called_once_with("/api/activities/abc-12345/fit/")
+        assert result["format"] == "FIT"
+        assert Path(result["file_path"]).exists()
