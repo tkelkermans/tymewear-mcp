@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from tymewear_mcp.client.http import TymeClient
 
@@ -32,27 +32,27 @@ async def get_activities(
     if pro_team:
         params["pro_team"] = pro_team
     data = await client.get("/v2/api/activities-cursor/", params=params)
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
 async def get_activity(client: TymeClient, activity_id: str) -> dict[str, Any]:
     data = await client.get(f"/v2/api/activities/{activity_id}/")
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
 async def get_activity_status(client: TymeClient, activity_id: str) -> dict[str, Any]:
     data = await client.get(f"/v2/api/activities/{activity_id}/status/")
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
 async def pin_activity(client: TymeClient, activity_id: str) -> dict[str, Any]:
     data = await client.post(f"/api/activities/{activity_id}/pin/")
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
 async def get_pinned_activity(client: TymeClient, user_id: int) -> dict[str, Any]:
     data = await client.get(f"/api/users/{user_id}/pinned-activity/")
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
 async def delete_activity(client: TymeClient, activity_id: str) -> dict[str, str]:

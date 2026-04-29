@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -56,7 +57,7 @@ def _get_client() -> TymeClient:
     return _client
 
 
-@server.list_tools()
+@server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
 async def list_tools() -> list[Tool]:
     return [
         Tool(
@@ -257,9 +258,11 @@ async def list_tools() -> list[Tool]:
     ]
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+@server.call_tool()  # type: ignore[untyped-decorator]
+async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     client = _get_client()
+    params: Any
+    result: Any
 
     if name == "tw_auth_status":
         result = await auth_status_mod.auth_status(client)

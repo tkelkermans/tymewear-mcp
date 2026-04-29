@@ -1,8 +1,8 @@
 """Tests for breathing data tools."""
 
 from unittest.mock import AsyncMock
-import pytest
-from tymewear_mcp.tools.breathing_data import get_processed_data, get_new_processed_data
+
+from tymewear_mcp.tools.breathing_data import get_new_processed_data, get_processed_data
 
 SAMPLE_TIMESERIES = [
     {"time": 0, "br": 15.2, "tv": 1.8, "ve": 27.4, "hr": 120, "power": 180, "zone": 1},
@@ -44,7 +44,7 @@ class TestGetNewProcessedData:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=SAMPLE_TIMESERIES)
         mock_client.sanitize = lambda d: d
-        result = await get_new_processed_data(mock_client, "abc-123")
+        await get_new_processed_data(mock_client, "abc-123")
         mock_client.get.assert_called_once_with("/v2/api/activities/abc-123/new-processed-data/")
 
     async def test_handles_not_found(self):

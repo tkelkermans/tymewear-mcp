@@ -1,13 +1,15 @@
 # tests/test_tools/test_thresholds.py
 from unittest.mock import AsyncMock
-import pytest
-from tymewear_mcp.tools.thresholds import get_ve_targets, tag_threshold, tag_new_zone
+
+from tymewear_mcp.tools.thresholds import get_ve_targets, tag_new_zone, tag_threshold
 
 
 class TestGetVeTargets:
     async def test_returns_targets(self):
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value={"bike_vt1": 60.0, "bike_bp": 80.0, "bike_vt2": 110.0, "bike_vo2max": 160.0})
+        mock_client.get = AsyncMock(
+            return_value={"bike_vt1": 60.0, "bike_bp": 80.0, "bike_vt2": 110.0, "bike_vo2max": 160.0}
+        )
         mock_client.sanitize = lambda d: d
         result = await get_ve_targets(mock_client, user_id=99999)
         mock_client.get.assert_called_once_with("/api/users/99999/ve-targets/")

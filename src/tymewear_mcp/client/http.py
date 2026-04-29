@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from httpx import Response
@@ -124,7 +124,7 @@ class TymeClient:
 
         if resp.status_code >= 400:
             resp.raise_for_status()
-        return resp
+        return cast(Response, resp)
 
     async def get(self, path: str, **kwargs: Any) -> Any:
         return await self._request("get", path, **kwargs)

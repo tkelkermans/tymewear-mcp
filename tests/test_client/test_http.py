@@ -34,7 +34,7 @@ class TestTymeClient:
         api_response = httpx.Response(200, json={"id": 1})
         with patch.object(client, "_http") as mock_http:
             mock_http.get = AsyncMock(return_value=api_response)
-            result = await client.get("/v2/api/profile/")
+            await client.get("/v2/api/profile/")
             call_kwargs = mock_http.get.call_args[1]
             assert call_kwargs["headers"]["Authorization"] == "Token mytoken"
             assert call_kwargs["headers"]["X-Source"] == "v2"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from tymewear_mcp.client.http import TymeClient
 
@@ -10,7 +10,7 @@ from tymewear_mcp.client.http import TymeClient
 async def get_profile(client: TymeClient) -> dict[str, Any]:
     """Get the current user's profile."""
     data = await client.get("/v2/api/profile/")
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
 async def update_profile(
@@ -29,4 +29,4 @@ async def update_profile(
     if units is not None:
         payload["units"] = units
     data = await client.patch(f"/v2/api/profile/{profile_id}/", json=payload)
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))

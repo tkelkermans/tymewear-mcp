@@ -10,7 +10,7 @@ Tyme Wear makes the VitalPro chest strap, a wearable breathing sensor that measu
 
 ## Features
 
-- **20 MCP tools** for profile, activities, breathing data, VE thresholds, zone distributions, max values, and exports
+- **37 MCP tools** for profile, activities, breathing data, VE thresholds, activity files/logs/detection, training plans, workout recommendations, integrations, subscription/account, resting/max physiology, and exports
 - **Secure credential storage** via system keyring (macOS Keychain / Windows Credential Manager) with AES-256-GCM encrypted file fallback
 - **Auto-authentication** with token caching and automatic re-auth on expiry
 - **Smart breathing data** with summary, window, and full modes to avoid context overflow
@@ -80,7 +80,7 @@ The Tyme Wear tools will appear in Claude's tool list.
 
 | Tool | Description |
 |------|-------------|
-| `tw_get_activities` | List activities with cursor pagination, filter by sport type (1=run, 2=bike) |
+| `tw_get_activities` | List activities with cursor pagination and website filters for sports, activity types, search, user ID, and pro team |
 | `tw_get_activity` | Full activity detail: duration, thresholds, zones, TSS, firmware, third-party links |
 | `tw_get_activity_status` | Algorithm processing status for an activity |
 | `tw_pin_activity` | Pin/unpin an activity for threshold detection |
@@ -93,6 +93,38 @@ The Tyme Wear tools will appear in Claude's tool list.
 |------|-------------|
 | `tw_get_processed_data` | Per-second breathing time-series with 3 modes: **summary** (aggregated stats — default), **window** (raw data for a time range), **full** (all records) |
 | `tw_get_new_processed_data` | New-format processed data (if available for the activity) |
+
+### Activity Files & Detection
+
+| Tool | Description |
+|------|-------------|
+| `tw_get_activity_logs` | Get read-only activity logs/events |
+| `tw_get_activity_strap_files` | Get strap-file metadata when available |
+| `tw_export_activity_strap_files` | Export raw strap files when available |
+| `tw_get_activity_workout_zone_detection` | Get workout-zone detection results |
+
+### Training Plans & Workouts
+
+| Tool | Description |
+|------|-------------|
+| `tw_get_training_plan` | Get current training plan |
+| `tw_get_training_plan_by_date` | Get training-plan data for a date |
+| `tw_get_training_plan_by_week` | Get training-plan data for a week |
+| `tw_get_training_plan_history` | Get training-plan history |
+| `tw_get_training_plan_config` | Get training-plan configuration |
+| `tw_get_training_plan_preview` | Get training-plan preview |
+| `tw_get_workout_recommendation` | Get workout recommendation |
+
+### Integrations & Account
+
+| Tool | Description |
+|------|-------------|
+| `tw_get_integrations` | List integrations |
+| `tw_get_integration` | Get integration details |
+| `tw_get_integration_health` | Get integration health/status |
+| `tw_get_subscription_status` | Get subscription status |
+| `tw_get_subscription_plans` | Get available subscription plans |
+| `tw_get_resting_max_values` | Get resting/max physiology values |
 
 ### Thresholds & Zones
 
@@ -127,6 +159,9 @@ Once configured, you can ask Claude things like:
 - *"What are my current VT1 and VT2 thresholds for cycling?"*
 - *"Export my last activity as a FIT file"*
 - *"Compare my VE targets between running and cycling"*
+- *"Show my current training plan and workout recommendation"*
+- *"Check whether my latest ride has strap files, logs, or workout-zone detection results"*
+- *"List my connected integrations and subscription status"*
 
 ## Security
 
@@ -141,11 +176,11 @@ Once configured, you can ask Claude things like:
 tymewear-mcp/
 ├── src/tymewear_mcp/
 │   ├── cli.py              # CLI entry point
-│   ├── server.py           # MCP server + 20 tool registrations
+│   ├── server.py           # MCP server + 37 tool registrations
 │   ├── auth/               # Credential storage (keyring → encrypted → env)
 │   ├── client/             # Async HTTP client + Pydantic models
 │   └── tools/              # Tool implementations
-└── tests/                  # 53 tests
+└── tests/                  # 126 tests
 ```
 
 **Tech stack:** Python 3.10+, [MCP SDK](https://github.com/modelcontextprotocol/python-sdk), httpx, Pydantic, keyring, cryptography
@@ -155,7 +190,7 @@ tymewear-mcp/
 ```bash
 pip install -e ".[dev]"
 pytest tests/ -v          # Run tests
-ruff check src/           # Lint
+ruff check src tests      # Lint
 mypy src/                 # Type check
 ```
 

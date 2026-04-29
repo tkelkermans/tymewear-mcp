@@ -9,6 +9,7 @@ import logging
 import os
 import platform
 import secrets
+from typing import cast
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -42,10 +43,10 @@ def _machine_id() -> str:
         elif system == "Windows":
             import winreg
 
-            with winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"
+            with winreg.OpenKey(  # type: ignore[attr-defined]
+                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography"  # type: ignore[attr-defined]
             ) as key:
-                return winreg.QueryValueEx(key, "MachineGuid")[0]
+                return cast(str, winreg.QueryValueEx(key, "MachineGuid")[0])  # type: ignore[attr-defined]
     except Exception:
         logger.info("Could not read platform machine ID; using hostname-based fallback")
     return ""
@@ -101,7 +102,7 @@ class EncryptedStorage:
             key = self._derive_key(salt)
             aesgcm = AESGCM(key)
             plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-            return json.loads(plaintext)
+            return cast(dict[str, str], json.loads(plaintext))
         except FileNotFoundError:
             return None
         except Exception:

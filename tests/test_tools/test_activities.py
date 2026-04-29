@@ -2,13 +2,15 @@
 
 from unittest.mock import AsyncMock
 
-import pytest
-
-from tymewear_mcp.tools.activities import (
-    delete_activity, get_activities, get_activity,
-    get_activity_status, get_pinned_activity, pin_activity,
-)
 from tymewear_mcp.tools._validation import GetActivitiesInput
+from tymewear_mcp.tools.activities import (
+    delete_activity,
+    get_activities,
+    get_activity,
+    get_activity_status,
+    get_pinned_activity,
+    pin_activity,
+)
 
 SAMPLE_ACTIVITY = {
     "id": "abc-123", "name": "Morning Ride", "type": "0",
@@ -53,7 +55,7 @@ class TestGetActivityStatus:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value={"status": "success"})
         mock_client.sanitize = lambda d: d
-        result = await get_activity_status(mock_client, "abc-123")
+        await get_activity_status(mock_client, "abc-123")
         mock_client.get.assert_called_once_with("/v2/api/activities/abc-123/status/")
 
 
@@ -62,7 +64,7 @@ class TestPinActivity:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value={"pinned": True})
         mock_client.sanitize = lambda d: d
-        result = await pin_activity(mock_client, "abc-123")
+        await pin_activity(mock_client, "abc-123")
         mock_client.post.assert_called_once_with("/api/activities/abc-123/pin/")
 
 
@@ -71,7 +73,7 @@ class TestGetPinnedActivity:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value={"id": "abc-123", "pinned": True})
         mock_client.sanitize = lambda d: d
-        result = await get_pinned_activity(mock_client, user_id=99999)
+        await get_pinned_activity(mock_client, user_id=99999)
         mock_client.get.assert_called_once_with("/api/users/99999/pinned-activity/")
 
 

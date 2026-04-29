@@ -7,6 +7,7 @@ import argparse
 import getpass
 import json
 import sys
+from collections.abc import Callable
 
 from tymewear_mcp.auth.storage import CredentialStorage
 
@@ -120,7 +121,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    commands = {
+    commands: dict[str, Callable[[argparse.Namespace], None]] = {
         "auth": cmd_auth,
         "auth-status": cmd_auth_status,
         "auth-clear": cmd_auth_clear,

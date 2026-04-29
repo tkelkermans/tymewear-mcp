@@ -7,7 +7,6 @@ import pytest
 
 from tymewear_mcp import server as server_mod
 
-
 NEW_TOOLS = [
     "tw_get_activity_logs",
     "tw_get_activity_strap_files",

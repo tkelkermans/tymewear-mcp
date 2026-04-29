@@ -2,10 +2,7 @@
 
 from unittest.mock import AsyncMock
 
-import pytest
-
 from tymewear_mcp.tools.profile import get_profile, update_profile
-
 
 SAMPLE_PROFILE = {
     "id": 99999, "email": "test@example.com", "gender": "M", "units": "SI",

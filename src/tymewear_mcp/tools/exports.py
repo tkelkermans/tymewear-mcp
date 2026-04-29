@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from httpx import Response
@@ -25,7 +25,7 @@ def _save_export(resp: Response, activity_id: str, extension: str) -> dict[str, 
 
     if "application/json" in content_type:
         data = resp.json()
-        return TymeClient.sanitize(data)
+        return cast(dict[str, Any], TymeClient.sanitize(data))
 
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     filename = _extract_filename(resp) or f"activity_{activity_id[:8]}.{extension}"
