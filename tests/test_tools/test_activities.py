@@ -8,6 +8,7 @@ from tymewear_mcp.tools.activities import (
     delete_activity, get_activities, get_activity,
     get_activity_status, get_pinned_activity, pin_activity,
 )
+from tymewear_mcp.tools._validation import GetActivitiesInput
 
 SAMPLE_ACTIVITY = {
     "id": "abc-123", "name": "Morning Ride", "type": "0",
@@ -81,3 +82,67 @@ class TestDeleteActivity:
         result = await delete_activity(mock_client, "abc-123")
         mock_client.delete.assert_called_once_with("/v2/api/activities/abc-123/")
         assert result["status"] == "deleted"
+
+
+class TestActivityFilters:
+    def test_validation_accepts_website_filters(self):
+        params = GetActivitiesInput.model_validate(
+            {
+                "sport": 2,
+                "sports": ["2"],
+                "activity_types": ["0", "6"],
+                "search": "tempo",
+                "user_id": "99999",
+                "pro_team": "visma",
+            }
+        )
+
+        assert params.sport == 2
+        assert params.sports == ["2"]
+        assert params.activity_types == ["0", "6"]
+        assert params.search == "tempo"
+        assert params.user_id == "99999"
+        assert params.pro_team == "visma"
+
+    async def test_get_activities_sends_dashboard_filters(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={"next": None, "previous": None, "results": []})
+        mock_client.sanitize = lambda d: d
+
+        await get_activities(
+            mock_client,
+            user_id=99999,
+            sport=2,
+            sports=["1"],
+            activity_types=["0", "6"],
+            search="tempo",
+            limit=25,
+            cursor="abc",
+            requested_user_id="12345",
+            pro_team="visma",
+        )
+
+        mock_client.get.assert_called_once_with(
+            "/v2/api/activities-cursor/",
+            params={
+                "user": "12345",
+                "limit": 25,
+                "sport": ["1"],
+                "type": ["0", "6"],
+                "search": "tempo",
+                "cursor": "abc",
+                "pro_team": "visma",
+            },
+        )
+
+    async def test_legacy_sport_maps_to_sport_filter(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={"next": None, "previous": None, "results": []})
+        mock_client.sanitize = lambda d: d
+
+        await get_activities(mock_client, user_id=99999, sport=2)
+
+        mock_client.get.assert_called_once_with(
+            "/v2/api/activities-cursor/",
+            params={"user": 99999, "limit": 50, "sport": ["2"]},
+        )

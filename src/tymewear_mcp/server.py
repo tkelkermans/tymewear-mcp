@@ -186,7 +186,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         params = GetActivitiesInput.model_validate(arguments)
         profile = await profile_mod.get_profile(client)
         result = await activities_mod.get_activities(
-            client, user_id=profile["id"], sport=params.sport, limit=params.limit, cursor=params.cursor
+            client,
+            user_id=profile["id"],
+            sport=params.sport,
+            limit=params.limit,
+            cursor=params.cursor,
+            sports=params.sports,
+            activity_types=params.activity_types,
+            search=params.search,
+            requested_user_id=params.user_id,
+            pro_team=params.pro_team,
         )
 
     elif name == "tw_get_activity":

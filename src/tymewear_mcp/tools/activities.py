@@ -8,14 +8,29 @@ from tymewear_mcp.client.http import TymeClient
 
 
 async def get_activities(
-    client: TymeClient, user_id: int, sport: int | None = None,
-    limit: int = 50, cursor: str | None = None,
+    client: TymeClient,
+    user_id: int,
+    sport: int | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    sports: list[str] | None = None,
+    activity_types: list[str] | None = None,
+    search: str | None = None,
+    requested_user_id: str | None = None,
+    pro_team: str | None = None,
 ) -> dict[str, Any]:
-    params: dict[str, Any] = {"user": user_id, "limit": limit}
-    if sport is not None:
-        params["type"] = sport
+    params: dict[str, Any] = {"user": requested_user_id or user_id, "limit": limit}
+    sport_filters = sports or ([str(sport)] if sport is not None else None)
+    if sport_filters:
+        params["sport"] = sport_filters
+    if activity_types:
+        params["type"] = activity_types
+    if search:
+        params["search"] = search
     if cursor is not None:
         params["cursor"] = cursor
+    if pro_team:
+        params["pro_team"] = pro_team
     data = await client.get("/v2/api/activities-cursor/", params=params)
     return client.sanitize(data)
 

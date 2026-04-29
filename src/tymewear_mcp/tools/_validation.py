@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field
 
 
 class GetActivitiesInput(BaseModel):
-    sport: int | None = Field(default=None, description="Filter by sport: 1=run, 2=bike")
+    sport: int | None = Field(default=None, description="Legacy sport filter: 1=run, 2=bike")
+    sports: list[str] | None = Field(default=None, description="Website dashboard sport query param filters")
+    activity_types: list[str] | None = Field(default=None, description="Website dashboard type query param filters")
+    search: str | None = Field(default=None, description="Search activity names and metadata")
+    user_id: str | None = Field(default=None, description="Optional user id override for admin/trainer contexts")
+    pro_team: str | None = Field(default=None, description="Optional pro team filter")
     limit: int = Field(default=50, le=1000, gt=0, description="Max results to return")
     cursor: str | None = Field(default=None, description="Pagination cursor from previous response")
 
