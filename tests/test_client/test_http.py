@@ -94,3 +94,18 @@ class TestTymeClient:
             assert elapsed >= 0.1
 
         await client.close()
+
+
+async def test_get_raw_returns_response():
+    client = TymeClient({"email": "test@example.com", "password": "secret"})
+    client._token = "token"
+    raw_response = httpx.Response(200, content=b"fit-bytes")
+
+    with patch.object(client, "_http") as mock_http:
+        mock_http.get = AsyncMock(return_value=raw_response)
+        result = await client.get_raw("/api/activities/abc/fit/")
+
+    assert result is raw_response
+    mock_http.get.assert_called_once()
+
+    await client.close()

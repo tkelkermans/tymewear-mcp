@@ -135,6 +135,9 @@ class TymeClient:
     async def post_raw(self, path: str, **kwargs: Any) -> Response:
         return await self._request_raw("post", path, **kwargs)
 
+    async def get_raw(self, path: str, **kwargs: Any) -> Response:
+        return await self._request_raw("get", path, **kwargs)
+
     async def patch(self, path: str, **kwargs: Any) -> Any:
         return await self._request("patch", path, **kwargs)
 
