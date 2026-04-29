@@ -63,3 +63,7 @@ class TrainingPlanByDateInput(BaseModel):
 
 class TrainingPlanByWeekInput(BaseModel):
     week: str = Field(description="Training plan week identifier, for example 2026-W18")
+
+
+class IntegrationInput(BaseModel):
+    integration_id: str = Field(description="Integration id or slug, for example garmin or intervals-icu")
