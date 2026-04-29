@@ -16,7 +16,7 @@ EXPORT_DIR = Path.home() / "Downloads" / "tymewear"
 
 def _save_binary(resp: httpx.Response, activity_id: str, extension: str) -> dict[str, Any]:
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    filename = _extract_filename(resp) or f"activity_{activity_id[:8]}_strap_files.{extension}"
+    filename = Path(_extract_filename(resp) or f"activity_{activity_id[:8]}_strap_files.{extension}").name
     filepath = EXPORT_DIR / filename
     filepath.write_bytes(resp.content)
     return {
@@ -41,7 +41,7 @@ async def get_activity_strap_files(client: TymeClient, activity_id: str) -> dict
             return unavailable_from_http_error(exc, default_reason=reason)
         raise
     sanitized = client.sanitize(data)
-    return {"available": True, **sanitized} if isinstance(sanitized, dict) else {"available": True, "data": sanitized}
+    return {**sanitized, "available": True} if isinstance(sanitized, dict) else {"available": True, "data": sanitized}
 
 
 async def export_activity_strap_files(client: TymeClient, activity_id: str) -> dict[str, Any]:
@@ -55,7 +55,7 @@ async def export_activity_strap_files(client: TymeClient, activity_id: str) -> d
     content_type = resp.headers.get("content-type", "")
     if "application/json" in content_type:
         data = TymeClient.sanitize(resp.json())
-        return {"available": True, **data} if isinstance(data, dict) else {"available": True, "data": data}
+        return {**data, "available": True} if isinstance(data, dict) else {"available": True, "data": data}
     extension = "zip" if "zip" in content_type else "bin"
     return _save_binary(resp, activity_id, extension)
 
@@ -68,4 +68,4 @@ async def get_activity_workout_zone_detection(client: TymeClient, activity_id: s
             return unavailable_from_http_error(exc, default_reason="feature_not_available")
         raise
     sanitized = client.sanitize(data)
-    return {"available": True, **sanitized} if isinstance(sanitized, dict) else {"available": True, "data": sanitized}
+    return {**sanitized, "available": True} if isinstance(sanitized, dict) else {"available": True, "data": sanitized}
