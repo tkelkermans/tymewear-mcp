@@ -146,3 +146,15 @@ class TestActivityFilters:
             "/v2/api/activities-cursor/",
             params={"user": 99999, "limit": 50, "sport": ["2"]},
         )
+
+    async def test_empty_sports_list_does_not_fall_back_to_legacy_sport(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={"next": None, "previous": None, "results": []})
+        mock_client.sanitize = lambda d: d
+
+        await get_activities(mock_client, user_id=99999, sport=2, sports=[])
+
+        mock_client.get.assert_called_once_with(
+            "/v2/api/activities-cursor/",
+            params={"user": 99999, "limit": 50},
+        )

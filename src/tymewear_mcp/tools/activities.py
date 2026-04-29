@@ -20,7 +20,7 @@ async def get_activities(
     pro_team: str | None = None,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {"user": requested_user_id or user_id, "limit": limit}
-    sport_filters = sports or ([str(sport)] if sport is not None else None)
+    sport_filters = sports if sports is not None else ([str(sport)] if sport is not None else None)
     if sport_filters:
         params["sport"] = sport_filters
     if activity_types:
