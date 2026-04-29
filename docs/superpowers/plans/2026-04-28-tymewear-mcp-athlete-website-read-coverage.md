@@ -227,7 +227,9 @@ git commit -m "feat: add raw GET and availability helpers"
 **Files:**
 - Modify: `src/tymewear_mcp/tools/_validation.py`
 - Modify: `src/tymewear_mcp/tools/activities.py`
+- Modify: `src/tymewear_mcp/server.py`
 - Modify: `tests/test_tools/test_activities.py`
+- Create or modify: `tests/test_server.py`
 
 - [ ] **Step 1: Write failing validation and tool tests**
 
@@ -360,22 +362,48 @@ async def get_activities(
     return client.sanitize(data)
 ```
 
-- [ ] **Step 5: Run activity tests**
+- [ ] **Step 5: Wire server forwarding for the exposed activity filters**
+
+Replace the existing `tw_get_activities` branch in `src/tymewear_mcp/server.py` with:
+
+```python
+    elif name == "tw_get_activities":
+        params = GetActivitiesInput.model_validate(arguments)
+        profile = await profile_mod.get_profile(client)
+        result = await activities_mod.get_activities(
+            client,
+            user_id=profile["id"],
+            sport=params.sport,
+            limit=params.limit,
+            cursor=params.cursor,
+            sports=params.sports,
+            activity_types=params.activity_types,
+            search=params.search,
+            requested_user_id=params.user_id,
+            pro_team=params.pro_team,
+        )
+```
+
+- [ ] **Step 6: Add a focused server forwarding test**
+
+If `tests/test_server.py` does not exist, create it. Add a test that monkeypatches `_get_client`, `profile_mod.get_profile`, and `activities_mod.get_activities`, then calls `call_tool("tw_get_activities", ...)` with new filter arguments and asserts the new kwargs are forwarded.
+
+- [ ] **Step 7: Run activity and server tests**
 
 Run:
 
 ```bash
-pytest tests/test_tools/test_activities.py -v
+pytest tests/test_tools/test_activities.py tests/test_server.py -v
 ```
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 Run:
 
 ```bash
-git add src/tymewear_mcp/tools/_validation.py src/tymewear_mcp/tools/activities.py tests/test_tools/test_activities.py
+git add src/tymewear_mcp/tools/_validation.py src/tymewear_mcp/tools/activities.py src/tymewear_mcp/server.py tests/test_tools/test_activities.py tests/test_server.py
 git commit -m "feat: add Tymewear activity listing filters"
 ```
 
@@ -1382,29 +1410,7 @@ In `list_tools()`, insert these `Tool(...)` entries before export tools:
         ),
 ```
 
-- [ ] **Step 5: Update `tw_get_activities` routing**
-
-Replace the existing `tw_get_activities` branch in `call_tool()` with:
-
-```python
-    elif name == "tw_get_activities":
-        params = GetActivitiesInput.model_validate(arguments)
-        profile = await profile_mod.get_profile(client)
-        result = await activities_mod.get_activities(
-            client,
-            user_id=profile["id"],
-            sport=params.sport,
-            limit=params.limit,
-            cursor=params.cursor,
-            sports=params.sports,
-            activity_types=params.activity_types,
-            search=params.search,
-            requested_user_id=params.user_id,
-            pro_team=params.pro_team,
-        )
-```
-
-- [ ] **Step 6: Add call routing branches**
+- [ ] **Step 5: Add call routing branches**
 
 Insert these branches in `call_tool()` before the export branches:
 
@@ -1476,7 +1482,7 @@ Insert these branches in `call_tool()` before the export branches:
         result = await account_mod.get_subscription_plans(client)
 ```
 
-- [ ] **Step 7: Run server tests**
+- [ ] **Step 6: Run server tests**
 
 Run:
 
@@ -1486,7 +1492,7 @@ pytest tests/test_server.py -v
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 Run:
 
