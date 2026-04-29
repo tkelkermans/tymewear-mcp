@@ -29,9 +29,10 @@ async def test_get_resting_max_values_payload_cannot_override_availability():
     assert result == {"available": True, "max_hr": 190}
 
 
-async def test_get_resting_max_values_403():
+@pytest.mark.parametrize("status_code", [403, 404])
+async def test_get_resting_max_values_unavailable(status_code: int):
     request = httpx.Request("GET", "https://api.tymewear.com/v2/api/resting-max-values/")
-    response = httpx.Response(403, json={"detail": "Upgrade required"}, request=request)
+    response = httpx.Response(status_code, json={"detail": "Upgrade required"}, request=request)
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(side_effect=httpx.HTTPStatusError("Forbidden", request=request, response=response))
 
