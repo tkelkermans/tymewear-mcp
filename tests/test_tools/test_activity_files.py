@@ -96,7 +96,7 @@ class TestActivityFiles:
     async def test_export_activity_strap_files_constrains_content_disposition_filename(self, tmp_path, monkeypatch):
         monkeypatch.setattr("tymewear_mcp.tools.activity_files.EXPORT_DIR", tmp_path)
         mock_client = AsyncMock()
-        mock_client.get_raw = AsyncMock(return_value=_binary_response_with_filename("../outside.zip"))
+        mock_client.get_raw = AsyncMock(return_value=_binary_response_with_filename(r"..\outside.zip"))
 
         result = await export_activity_strap_files(mock_client, "abc-12345")
 

@@ -3,8 +3,35 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import unquote
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+PATH_DELIMITERS = frozenset("/\\?#")
+
+
+def _unquote_repeatedly(value: str) -> str:
+    decoded = value
+    for _ in range(3):
+        next_decoded = unquote(decoded)
+        if next_decoded == decoded:
+            return decoded
+        decoded = next_decoded
+    return decoded
+
+
+class ActivityIdMixin(BaseModel):
+    @field_validator("activity_id", check_fields=False)
+    @classmethod
+    def validate_activity_id_path_segment(cls, value: str) -> str:
+        decoded = _unquote_repeatedly(value)
+        if not value or value != value.strip() or not decoded or decoded != decoded.strip():
+            raise ValueError("activity_id must be a non-empty path segment without surrounding whitespace")
+        if value in {".", ".."} or decoded in {".", ".."}:
+            raise ValueError("activity_id cannot be a relative path segment")
+        if any(delimiter in decoded for delimiter in PATH_DELIMITERS):
+            raise ValueError("activity_id cannot contain path or query delimiters")
+        return value
 
 
 class GetActivitiesInput(BaseModel):
@@ -18,11 +45,11 @@ class GetActivitiesInput(BaseModel):
     cursor: str | None = Field(default=None, description="Pagination cursor from previous response")
 
 
-class GetActivityInput(BaseModel):
+class GetActivityInput(ActivityIdMixin):
     activity_id: str = Field(description="Activity UUID")
 
 
-class GetProcessedDataInput(BaseModel):
+class GetProcessedDataInput(ActivityIdMixin):
     activity_id: str = Field(description="Activity UUID")
     mode: Literal["summary", "window", "full"] = Field(
         default="summary",
@@ -32,12 +59,12 @@ class GetProcessedDataInput(BaseModel):
     window_end: int | None = Field(default=None, description="End second for window mode")
 
 
-class TagThresholdInput(BaseModel):
+class TagThresholdInput(ActivityIdMixin):
     threshold_type: Literal["vt1", "vt2", "bp", "vo2max"] = Field(description="Threshold type to tag")
     activity_id: str = Field(description="Activity UUID to tag threshold from")
 
 
-class TagNewZoneInput(BaseModel):
+class TagNewZoneInput(ActivityIdMixin):
     zone_type: Literal["fatmax", "vt1", "vt2", "vo2max"] = Field(description="Zone type to tag")
     activity_id: str = Field(description="Activity UUID to tag zone from")
 
@@ -47,7 +74,7 @@ class RespondMaxValueInput(BaseModel):
     accept: bool = Field(description="True to accept, False to dismiss")
 
 
-class ExportInput(BaseModel):
+class ExportInput(ActivityIdMixin):
     activity_id: str = Field(description="Activity UUID to export")
 
 

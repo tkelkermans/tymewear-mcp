@@ -19,6 +19,14 @@ def _extract_filename(resp: Response) -> str | None:
     return match.group(1).strip() if match else None
 
 
+def _safe_export_filename(filename: str | None, fallback: str) -> str:
+    if filename is not None:
+        safe_name = Path(filename.replace("\\", "/")).name
+        if safe_name not in {"", ".", ".."}:
+            return safe_name
+    return fallback
+
+
 def _save_export(resp: Response, activity_id: str, extension: str) -> dict[str, Any]:
     """Save response content to file and return metadata."""
     content_type = resp.headers.get("content-type", "")
@@ -28,7 +36,7 @@ def _save_export(resp: Response, activity_id: str, extension: str) -> dict[str, 
         return cast(dict[str, Any], TymeClient.sanitize(data))
 
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    filename = _extract_filename(resp) or f"activity_{activity_id[:8]}.{extension}"
+    filename = _safe_export_filename(_extract_filename(resp), f"activity_{activity_id[:8]}.{extension}")
     filepath = EXPORT_DIR / filename
 
     filepath.write_bytes(resp.content)

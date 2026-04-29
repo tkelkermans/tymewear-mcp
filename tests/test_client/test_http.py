@@ -77,6 +77,76 @@ class TestTymeClient:
         assert sanitized["id"] == 1
         await client.close()
 
+    async def test_sanitize_removes_sensitive_key_variants_from_nested_payloads(self, mock_credentials):
+        client = TymeClient(credentials=mock_credentials)
+        data = {
+            "id": 1,
+            "api_key": "api-secret",
+            "client_secret": "client-secret",
+            "nested": [
+                {
+                    "auth_token": "auth-secret",
+                    "apiKey": "camel-api-secret",
+                    "clientSecret": "camel-client-secret",
+                    "X-Amz-Credential": "aws-credential",
+                    "visible": "kept",
+                },
+                {
+                    "X-Amz-Security-Token": "aws-token",
+                    "X-Amz-Signature": "aws-signature",
+                    "refreshToken": "camel-refresh-secret",
+                    "name": "export",
+                },
+            ],
+        }
+
+        sanitized = client.sanitize(data)
+
+        assert sanitized == {
+            "id": 1,
+            "nested": [
+                {"visible": "kept"},
+                {"name": "export"},
+            ],
+        }
+        await client.close()
+
+    async def test_sanitize_redacts_sensitive_url_query_params(self, mock_credentials):
+        client = TymeClient(credentials=mock_credentials)
+        data = {
+            "download_url": (
+                "https://s3.example.com/export.fit?"
+                "apiKey=camel-api-secret&"
+                "clientSecret=camel-client-secret&"
+                "X-Amz-Credential=credential-secret&"
+                "X-Amz-Security-Token=token-secret&"
+                "X-Amz-Signature=signature-secret&"
+                "Expires=123&"
+                "response-content-type=application%2Foctet-stream"
+            ),
+            "plain": "https://example.com/path?format=fit",
+        }
+
+        sanitized = client.sanitize(data)
+
+        assert sanitized["download_url"] == (
+            "https://s3.example.com/export.fit?"
+            "apiKey=%5BREDACTED%5D&"
+            "clientSecret=%5BREDACTED%5D&"
+            "X-Amz-Credential=%5BREDACTED%5D&"
+            "X-Amz-Security-Token=%5BREDACTED%5D&"
+            "X-Amz-Signature=%5BREDACTED%5D&"
+            "Expires=123&"
+            "response-content-type=application%2Foctet-stream"
+        )
+        assert "camel-api-secret" not in sanitized["download_url"]
+        assert "camel-client-secret" not in sanitized["download_url"]
+        assert "credential-secret" not in sanitized["download_url"]
+        assert "token-secret" not in sanitized["download_url"]
+        assert "signature-secret" not in sanitized["download_url"]
+        assert sanitized["plain"] == "https://example.com/path?format=fit"
+        await client.close()
+
     async def test_rate_limiting(self, mock_credentials):
         import time
 

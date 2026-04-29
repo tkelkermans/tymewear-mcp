@@ -9,14 +9,17 @@ import httpx
 
 from tymewear_mcp.client.http import TymeClient
 from tymewear_mcp.tools._availability import unavailable_from_http_error
-from tymewear_mcp.tools.exports import _extract_filename
+from tymewear_mcp.tools.exports import _extract_filename, _safe_export_filename
 
 EXPORT_DIR = Path.home() / "Downloads" / "tymewear"
 
 
 def _save_binary(resp: httpx.Response, activity_id: str, extension: str) -> dict[str, Any]:
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    filename = Path(_extract_filename(resp) or f"activity_{activity_id[:8]}_strap_files.{extension}").name
+    filename = _safe_export_filename(
+        _extract_filename(resp),
+        f"activity_{activity_id[:8]}_strap_files.{extension}",
+    )
     filepath = EXPORT_DIR / filename
     filepath.write_bytes(resp.content)
     return {

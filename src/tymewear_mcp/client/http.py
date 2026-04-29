@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, cast
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from httpx import Response
@@ -16,6 +18,29 @@ BASE_URL = "https://api.tymewear.com"
 RATE_LIMIT_MS = 150
 DEFAULT_TIMEOUT = 30.0
 SENSITIVE_KEYS = {"token", "password", "credential", "secret", "access_token", "refresh_token", "key", "authorization"}
+SENSITIVE_KEY_PARTS = frozenset({"token", "password", "credential", "secret", "key", "authorization", "signature"})
+REDACTED_VALUE = "[REDACTED]"
+
+
+def _is_sensitive_key(key: str) -> bool:
+    snake_like = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key)
+    lowered = snake_like.lower()
+    if lowered in SENSITIVE_KEYS:
+        return True
+    parts = [part for part in re.split(r"[^a-z0-9]+", lowered) if part]
+    return any(part in SENSITIVE_KEY_PARTS for part in parts)
+
+
+def _sanitize_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if not parsed.query:
+        return value
+
+    query = [
+        (key, REDACTED_VALUE if _is_sensitive_key(key) else param_value)
+        for key, param_value in parse_qsl(parsed.query, keep_blank_values=True)
+    ]
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
 
 
 class TymeClient:
@@ -147,7 +172,9 @@ class TymeClient:
     @staticmethod
     def sanitize(data: Any) -> Any:
         if isinstance(data, dict):
-            return {k: TymeClient.sanitize(v) for k, v in data.items() if k.lower() not in SENSITIVE_KEYS}
+            return {k: TymeClient.sanitize(v) for k, v in data.items() if not _is_sensitive_key(k)}
         if isinstance(data, list):
             return [TymeClient.sanitize(item) for item in data]
+        if isinstance(data, str):
+            return _sanitize_url(data)
         return data
