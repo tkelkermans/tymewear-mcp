@@ -18,7 +18,9 @@ async def _get_available(client: TymeClient, path: str, *, not_found_reason: str
     try:
         data = await client.get(path)
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in {403, 404}:
+        if exc.response.status_code == 403:
+            return unavailable_from_http_error(exc, default_reason="feature_not_available")
+        if exc.response.status_code == 404:
             return unavailable_from_http_error(exc, default_reason=not_found_reason)
         raise
     return _available(client.sanitize(data))

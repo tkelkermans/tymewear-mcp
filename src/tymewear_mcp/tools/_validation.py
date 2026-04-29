@@ -66,4 +66,8 @@ class TrainingPlanByWeekInput(BaseModel):
 
 
 class IntegrationInput(BaseModel):
-    integration_id: str = Field(description="Integration id or slug, for example garmin or intervals-icu")
+    integration_id: str = Field(
+        min_length=1,
+        pattern=r"^[^/]+$",
+        description="Integration id or slug, for example garmin or intervals-icu",
+    )

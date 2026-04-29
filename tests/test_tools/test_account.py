@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 from tymewear_mcp.tools.account import get_subscription_plans, get_subscription_status
 
 
-async def test_get_subscription_status():
+async def test_get_subscription_status() -> None:
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value={"status": "active"})
     mock_client.sanitize = lambda data: data
@@ -16,7 +16,7 @@ async def test_get_subscription_status():
     assert result == {"available": True, "status": "active"}
 
 
-async def test_get_subscription_status_payload_cannot_override_availability():
+async def test_get_subscription_status_payload_cannot_override_availability() -> None:
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value={"available": False, "status": "active"})
     mock_client.sanitize = lambda data: data
@@ -26,7 +26,7 @@ async def test_get_subscription_status_payload_cannot_override_availability():
     assert result == {"available": True, "status": "active"}
 
 
-async def test_get_subscription_plans():
+async def test_get_subscription_plans() -> None:
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=[{"name": "Pro"}])
     mock_client.sanitize = lambda data: data

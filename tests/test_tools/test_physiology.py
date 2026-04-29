@@ -8,7 +8,7 @@ import pytest
 from tymewear_mcp.tools.physiology import get_resting_max_values
 
 
-async def test_get_resting_max_values():
+async def test_get_resting_max_values() -> None:
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value={"max_hr": 190, "secret": "x"})
     mock_client.sanitize = lambda data: {"max_hr": data["max_hr"]}
@@ -19,7 +19,7 @@ async def test_get_resting_max_values():
     assert result == {"available": True, "max_hr": 190}
 
 
-async def test_get_resting_max_values_payload_cannot_override_availability():
+async def test_get_resting_max_values_payload_cannot_override_availability() -> None:
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value={"available": False, "max_hr": 190})
     mock_client.sanitize = lambda data: data
@@ -30,7 +30,7 @@ async def test_get_resting_max_values_payload_cannot_override_availability():
 
 
 @pytest.mark.parametrize("status_code", [403, 404])
-async def test_get_resting_max_values_unavailable(status_code: int):
+async def test_get_resting_max_values_unavailable(status_code: int) -> None:
     request = httpx.Request("GET", "https://api.tymewear.com/v2/api/resting-max-values/")
     response = httpx.Response(status_code, json={"detail": "Upgrade required"}, request=request)
     mock_client = AsyncMock()
@@ -42,7 +42,7 @@ async def test_get_resting_max_values_unavailable(status_code: int):
     assert result["reason"] == "feature_not_available"
 
 
-async def test_get_resting_max_values_unexpected_http_status_reraises():
+async def test_get_resting_max_values_unexpected_http_status_reraises() -> None:
     request = httpx.Request("GET", "https://api.tymewear.com/v2/api/resting-max-values/")
     response = httpx.Response(500, json={"detail": "Server error"}, request=request)
     error = httpx.HTTPStatusError("Server error", request=request, response=response)
