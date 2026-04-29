@@ -11,22 +11,30 @@ from mcp.types import TextContent, Tool
 
 from tymewear_mcp.auth.storage import CredentialStorage
 from tymewear_mcp.client.http import TymeClient
+from tymewear_mcp.tools import account as account_mod
 from tymewear_mcp.tools import activities as activities_mod
+from tymewear_mcp.tools import activity_files as activity_files_mod
 from tymewear_mcp.tools import auth_status as auth_status_mod
 from tymewear_mcp.tools import breathing_data as breathing_data_mod
 from tymewear_mcp.tools import exports as exports_mod
+from tymewear_mcp.tools import integrations as integrations_mod
 from tymewear_mcp.tools import max_values as max_values_mod
+from tymewear_mcp.tools import physiology as physiology_mod
 from tymewear_mcp.tools import profile as profile_mod
 from tymewear_mcp.tools import thresholds as thresholds_mod
+from tymewear_mcp.tools import training_plans as training_plans_mod
 from tymewear_mcp.tools import zones as zones_mod
 from tymewear_mcp.tools._validation import (
     ExportInput,
     GetActivitiesInput,
     GetActivityInput,
     GetProcessedDataInput,
+    IntegrationInput,
     RespondMaxValueInput,
     TagNewZoneInput,
     TagThresholdInput,
+    TrainingPlanByDateInput,
+    TrainingPlanByWeekInput,
     UpdateProfileInput,
 )
 
@@ -147,6 +155,91 @@ async def list_tools() -> list[Tool]:
             inputSchema=RespondMaxValueInput.model_json_schema(),
         ),
         Tool(
+            name="tw_get_activity_logs",
+            description="Get logs associated with a Tyme Wear activity.",
+            inputSchema=GetActivityInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_activity_strap_files",
+            description="Get strap files associated with a Tyme Wear activity.",
+            inputSchema=GetActivityInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_export_activity_strap_files",
+            description="Export strap files for a Tyme Wear activity.",
+            inputSchema=ExportInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_activity_workout_zone_detection",
+            description="Get workout zone detection data for a Tyme Wear activity.",
+            inputSchema=GetActivityInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_resting_max_values",
+            description="Get resting and max physiology values for the athlete.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="tw_get_training_plan",
+            description="Get the athlete's current training plan.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="tw_get_training_plan_by_date",
+            description="Get training plan entries for a specific date.",
+            inputSchema=TrainingPlanByDateInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_training_plan_by_week",
+            description="Get training plan entries for a specific week.",
+            inputSchema=TrainingPlanByWeekInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_training_plan_history",
+            description="Get the athlete's training plan history.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="tw_get_training_plan_config",
+            description="Get the athlete's training plan configuration.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="tw_get_training_plan_preview",
+            description="Get a preview of the athlete's training plan.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="tw_get_workout_recommendation",
+            description="Get the athlete's workout recommendation.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="tw_get_integrations",
+            description="List connected Tyme Wear integrations.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="tw_get_integration",
+            description="Get details for a Tyme Wear integration.",
+            inputSchema=IntegrationInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_integration_health",
+            description="Get health status for a Tyme Wear integration.",
+            inputSchema=IntegrationInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_subscription_status",
+            description="Get the athlete's Tyme Wear subscription status.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="tw_get_subscription_plans",
+            description="List available Tyme Wear subscription plans.",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
             name="tw_export_csv",
             description="Export a Tyme Wear activity as CSV file.",
             inputSchema=ExportInput.model_json_schema(),
@@ -254,6 +347,72 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     elif name == "tw_respond_max_value":
         params = RespondMaxValueInput.model_validate(arguments)
         result = await max_values_mod.respond_max_value(client, params.detection_id, params.accept)
+
+    elif name == "tw_get_activity_logs":
+        params = GetActivityInput.model_validate(arguments)
+        result = await activity_files_mod.get_activity_logs(client, params.activity_id)
+
+    elif name == "tw_get_activity_strap_files":
+        params = GetActivityInput.model_validate(arguments)
+        result = await activity_files_mod.get_activity_strap_files(client, params.activity_id)
+
+    elif name == "tw_export_activity_strap_files":
+        params = ExportInput.model_validate(arguments)
+        result = await activity_files_mod.export_activity_strap_files(client, params.activity_id)
+
+    elif name == "tw_get_activity_workout_zone_detection":
+        params = GetActivityInput.model_validate(arguments)
+        result = await activity_files_mod.get_activity_workout_zone_detection(client, params.activity_id)
+
+    elif name == "tw_get_resting_max_values":
+        result = await physiology_mod.get_resting_max_values(client)
+
+    elif name == "tw_get_training_plan":
+        profile = await profile_mod.get_profile(client)
+        result = await training_plans_mod.get_training_plan(client, profile["uuid"])
+
+    elif name == "tw_get_training_plan_by_date":
+        params = TrainingPlanByDateInput.model_validate(arguments)
+        profile = await profile_mod.get_profile(client)
+        result = await training_plans_mod.get_training_plan_by_date(client, profile["uuid"], params.date)
+
+    elif name == "tw_get_training_plan_by_week":
+        params = TrainingPlanByWeekInput.model_validate(arguments)
+        profile = await profile_mod.get_profile(client)
+        result = await training_plans_mod.get_training_plan_by_week(client, profile["uuid"], params.week)
+
+    elif name == "tw_get_training_plan_history":
+        profile = await profile_mod.get_profile(client)
+        result = await training_plans_mod.get_training_plan_history(client, profile["uuid"])
+
+    elif name == "tw_get_training_plan_config":
+        profile = await profile_mod.get_profile(client)
+        result = await training_plans_mod.get_training_plan_config(client, profile["uuid"])
+
+    elif name == "tw_get_training_plan_preview":
+        profile = await profile_mod.get_profile(client)
+        result = await training_plans_mod.get_training_plan_preview(client, profile["uuid"])
+
+    elif name == "tw_get_workout_recommendation":
+        profile = await profile_mod.get_profile(client)
+        result = await training_plans_mod.get_workout_recommendation(client, profile["id"])
+
+    elif name == "tw_get_integrations":
+        result = await integrations_mod.get_integrations(client)
+
+    elif name == "tw_get_integration":
+        params = IntegrationInput.model_validate(arguments)
+        result = await integrations_mod.get_integration(client, params.integration_id)
+
+    elif name == "tw_get_integration_health":
+        params = IntegrationInput.model_validate(arguments)
+        result = await integrations_mod.get_integration_health(client, params.integration_id)
+
+    elif name == "tw_get_subscription_status":
+        result = await account_mod.get_subscription_status(client)
+
+    elif name == "tw_get_subscription_plans":
+        result = await account_mod.get_subscription_plans(client)
 
     elif name == "tw_export_csv":
         params = ExportInput.model_validate(arguments)
