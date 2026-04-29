@@ -55,3 +55,11 @@ class UpdateProfileInput(BaseModel):
     weight: float | None = Field(default=None, description="Weight in current unit system")
     height: float | None = Field(default=None, description="Height in current unit system")
     units: Literal["SI", "imperial"] | None = Field(default=None, description="Unit system")
+
+
+class TrainingPlanByDateInput(BaseModel):
+    date: str = Field(description="ISO date in YYYY-MM-DD format", pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class TrainingPlanByWeekInput(BaseModel):
+    week: str = Field(description="Training plan week identifier, for example 2026-W18")
