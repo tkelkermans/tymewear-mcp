@@ -71,7 +71,10 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="tw_get_activities",
-            description="List Tyme Wear activities with pagination. Filter by sport (1=run, 2=bike).",
+            description=(
+                "List Tyme Wear activities with cursor pagination. Supports legacy sport filter "
+                "(1=run, 2=bike) plus website filters: sports, activity_types, search, user_id, and pro_team."
+            ),
             inputSchema=GetActivitiesInput.model_json_schema(),
         ),
         Tool(
