@@ -14,6 +14,23 @@ def mock_credentials():
 
 
 class TestTymeClient:
+    async def test_access_token_client_uses_token_without_signin(self):
+        client = TymeClient(access_token="upstream-token")
+        assert await client._ensure_token() == "upstream-token"
+
+        api_response = httpx.Response(200, json={"id": 1})
+        with patch.object(client, "_http") as mock_http:
+            mock_http.get = AsyncMock(return_value=api_response)
+            mock_http.post = AsyncMock()
+            await client.get("/v2/api/profile/")
+
+            mock_http.post.assert_not_called()
+            call_kwargs = mock_http.get.call_args[1]
+            assert call_kwargs["headers"]["Authorization"] == "Token upstream-token"
+            assert call_kwargs["headers"]["X-Source"] == "v2"
+
+        await client.close()
+
     async def test_authenticates_on_first_request(self, mock_credentials):
         client = TymeClient(credentials=mock_credentials)
         signin_response = httpx.Response(200, json={"token": "abc123"})

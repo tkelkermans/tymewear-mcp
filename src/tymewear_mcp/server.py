@@ -9,9 +9,11 @@ from typing import Any
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
+from pydantic import ValidationError
 
 from tymewear_mcp.auth.storage import CredentialStorage
 from tymewear_mcp.client.http import TymeClient
+from tymewear_mcp.public import PublicCredentialError, extract_upstream_token
 from tymewear_mcp.tools import account as account_mod
 from tymewear_mcp.tools import activities as activities_mod
 from tymewear_mcp.tools import activity_files as activity_files_mod
@@ -43,10 +45,48 @@ logger = logging.getLogger(__name__)
 
 server = Server("tymewear-mcp")
 _client: TymeClient | None = None
+_public_mode = False
+_public_allow_mutations = False
+
+_PUBLIC_DISABLED_EXPORT_TOOLS = {
+    "tw_export_activity_strap_files",
+    "tw_export_csv",
+    "tw_export_csv_full",
+    "tw_export_fit",
+}
+_PUBLIC_MUTATION_TOOLS = {
+    "tw_delete_activity",
+    "tw_pin_activity",
+    "tw_respond_max_value",
+    "tw_tag_new_zone",
+    "tw_tag_threshold",
+    "tw_update_profile",
+}
+
+
+def enable_public_mode(*, allow_mutations: bool = False) -> None:
+    global _public_allow_mutations, _public_mode
+    _public_mode = True
+    _public_allow_mutations = allow_mutations
+
+
+def disable_public_mode() -> None:
+    global _public_allow_mutations, _public_mode
+    _public_mode = False
+    _public_allow_mutations = False
 
 
 def _get_client() -> TymeClient:
     global _client
+    if _public_mode:
+        try:
+            request = server.request_context.request
+        except LookupError as exc:
+            raise PublicCredentialError(
+                "Public mode requires request-scoped Tyme Wear credentials and cannot use local credential storage."
+            ) from exc
+        return TymeClient(access_token=extract_upstream_token(request))
+
     if _client is not None:
         return _client
     storage = CredentialStorage()
@@ -57,8 +97,50 @@ def _get_client() -> TymeClient:
     return _client
 
 
-@server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
-async def list_tools() -> list[Tool]:
+def _public_exports_disabled_result() -> dict[str, Any]:
+    return {
+        "isError": True,
+        "error_code": "PUBLIC_EXPORTS_DISABLED",
+        "message": "File export tools are disabled in public mode because they would persist end-customer data.",
+    }
+
+
+def _public_mutations_disabled_result() -> dict[str, Any]:
+    return {
+        "isError": True,
+        "error_code": "PUBLIC_MUTATIONS_DISABLED",
+        "message": (
+            "Mutation tools are disabled in public mode by default. "
+            "Enable them explicitly only for trusted deployments."
+        ),
+    }
+
+
+def _public_credentials_error_result(error: PublicCredentialError) -> dict[str, Any]:
+    return {
+        "isError": True,
+        "error_code": "TYMEWEAR_UPSTREAM_TOKEN_REQUIRED",
+        "message": str(error),
+    }
+
+
+def _public_validation_error_result() -> dict[str, Any]:
+    return {
+        "isError": True,
+        "error_code": "INVALID_TOOL_ARGUMENTS",
+        "message": "Invalid tool arguments.",
+    }
+
+
+def _public_unknown_tool_result() -> dict[str, Any]:
+    return {
+        "isError": True,
+        "error_code": "UNKNOWN_TOOL",
+        "message": "Unknown tool.",
+    }
+
+
+def _registered_tools() -> list[Tool]:
     return [
         Tool(
             name="tw_auth_status",
@@ -258,179 +340,216 @@ async def list_tools() -> list[Tool]:
     ]
 
 
+def _registered_tool_names() -> set[str]:
+    return {tool.name for tool in _registered_tools()}
+
+
+@server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
+async def list_tools() -> list[Tool]:
+    tools = _registered_tools()
+    if _public_mode:
+        disabled_tools = set(_PUBLIC_DISABLED_EXPORT_TOOLS)
+        if not _public_allow_mutations:
+            disabled_tools.update(_PUBLIC_MUTATION_TOOLS)
+        return [tool for tool in tools if tool.name not in disabled_tools]
+    return tools
+
+
 @server.call_tool()  # type: ignore[untyped-decorator]
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    client = _get_client()
+    if _public_mode and name in _PUBLIC_DISABLED_EXPORT_TOOLS:
+        return [TextContent(type="text", text=json.dumps(_public_exports_disabled_result(), indent=2))]
+    if _public_mode and not _public_allow_mutations and name in _PUBLIC_MUTATION_TOOLS:
+        return [TextContent(type="text", text=json.dumps(_public_mutations_disabled_result(), indent=2))]
+    if _public_mode and name not in _registered_tool_names():
+        return [TextContent(type="text", text=json.dumps(_public_unknown_tool_result(), indent=2))]
+
+    try:
+        client = _get_client()
+    except PublicCredentialError as exc:
+        return [TextContent(type="text", text=json.dumps(_public_credentials_error_result(exc), indent=2))]
+
     params: Any
     result: Any
 
-    if name == "tw_auth_status":
-        result = await auth_status_mod.auth_status(client)
+    try:
+        if name == "tw_auth_status":
+            result = await auth_status_mod.auth_status(client)
 
-    elif name == "tw_get_profile":
-        result = await profile_mod.get_profile(client)
+        elif name == "tw_get_profile":
+            result = await profile_mod.get_profile(client)
 
-    elif name == "tw_update_profile":
-        params = UpdateProfileInput.model_validate(arguments)
-        profile = await profile_mod.get_profile(client)
-        result = await profile_mod.update_profile(
-            client,
-            profile_id=profile["id"],
-            weight=params.weight,
-            height=params.height,
-            units=params.units,
-        )
+        elif name == "tw_update_profile":
+            params = UpdateProfileInput.model_validate(arguments)
+            profile = await profile_mod.get_profile(client)
+            result = await profile_mod.update_profile(
+                client,
+                profile_id=profile["id"],
+                weight=params.weight,
+                height=params.height,
+                units=params.units,
+            )
 
-    elif name == "tw_get_activities":
-        params = GetActivitiesInput.model_validate(arguments)
-        profile = await profile_mod.get_profile(client)
-        result = await activities_mod.get_activities(
-            client,
-            user_id=profile["id"],
-            sport=params.sport,
-            limit=params.limit,
-            cursor=params.cursor,
-            sports=params.sports,
-            activity_types=params.activity_types,
-            search=params.search,
-            requested_user_id=params.user_id,
-            pro_team=params.pro_team,
-        )
+        elif name == "tw_get_activities":
+            params = GetActivitiesInput.model_validate(arguments)
+            profile = await profile_mod.get_profile(client)
+            result = await activities_mod.get_activities(
+                client,
+                user_id=profile["id"],
+                sport=params.sport,
+                limit=params.limit,
+                cursor=params.cursor,
+                sports=params.sports,
+                activity_types=params.activity_types,
+                search=params.search,
+                requested_user_id=params.user_id,
+                pro_team=params.pro_team,
+            )
 
-    elif name == "tw_get_activity":
-        params = GetActivityInput.model_validate(arguments)
-        result = await activities_mod.get_activity(client, params.activity_id)
+        elif name == "tw_get_activity":
+            params = GetActivityInput.model_validate(arguments)
+            result = await activities_mod.get_activity(client, params.activity_id)
 
-    elif name == "tw_get_activity_status":
-        params = GetActivityInput.model_validate(arguments)
-        result = await activities_mod.get_activity_status(client, params.activity_id)
+        elif name == "tw_get_activity_status":
+            params = GetActivityInput.model_validate(arguments)
+            result = await activities_mod.get_activity_status(client, params.activity_id)
 
-    elif name == "tw_pin_activity":
-        params = GetActivityInput.model_validate(arguments)
-        result = await activities_mod.pin_activity(client, params.activity_id)
+        elif name == "tw_pin_activity":
+            params = GetActivityInput.model_validate(arguments)
+            result = await activities_mod.pin_activity(client, params.activity_id)
 
-    elif name == "tw_get_pinned_activity":
-        profile = await profile_mod.get_profile(client)
-        result = await activities_mod.get_pinned_activity(client, user_id=profile["id"])
+        elif name == "tw_get_pinned_activity":
+            profile = await profile_mod.get_profile(client)
+            result = await activities_mod.get_pinned_activity(client, user_id=profile["id"])
 
-    elif name == "tw_delete_activity":
-        params = GetActivityInput.model_validate(arguments)
-        result = await activities_mod.delete_activity(client, params.activity_id)
+        elif name == "tw_delete_activity":
+            params = GetActivityInput.model_validate(arguments)
+            result = await activities_mod.delete_activity(client, params.activity_id)
 
-    elif name == "tw_get_processed_data":
-        params = GetProcessedDataInput.model_validate(arguments)
-        result = await breathing_data_mod.get_processed_data(
-            client, params.activity_id,
-            mode=params.mode, window_start=params.window_start, window_end=params.window_end,
-        )
+        elif name == "tw_get_processed_data":
+            params = GetProcessedDataInput.model_validate(arguments)
+            result = await breathing_data_mod.get_processed_data(
+                client,
+                params.activity_id,
+                mode=params.mode,
+                window_start=params.window_start,
+                window_end=params.window_end,
+            )
 
-    elif name == "tw_get_new_processed_data":
-        params = GetActivityInput.model_validate(arguments)
-        result = await breathing_data_mod.get_new_processed_data(client, params.activity_id)
+        elif name == "tw_get_new_processed_data":
+            params = GetActivityInput.model_validate(arguments)
+            result = await breathing_data_mod.get_new_processed_data(client, params.activity_id)
 
-    elif name == "tw_get_ve_targets":
-        profile = await profile_mod.get_profile(client)
-        result = await thresholds_mod.get_ve_targets(client, user_id=profile["id"])
+        elif name == "tw_get_ve_targets":
+            profile = await profile_mod.get_profile(client)
+            result = await thresholds_mod.get_ve_targets(client, user_id=profile["id"])
 
-    elif name == "tw_get_zone_distribution":
-        profile = await profile_mod.get_profile(client)
-        result = await zones_mod.get_zone_distribution(client, user_id=profile["id"])
+        elif name == "tw_get_zone_distribution":
+            profile = await profile_mod.get_profile(client)
+            result = await zones_mod.get_zone_distribution(client, user_id=profile["id"])
 
-    elif name == "tw_tag_threshold":
-        params = TagThresholdInput.model_validate(arguments)
-        result = await thresholds_mod.tag_threshold(client, params.threshold_type, params.activity_id)
+        elif name == "tw_tag_threshold":
+            params = TagThresholdInput.model_validate(arguments)
+            result = await thresholds_mod.tag_threshold(client, params.threshold_type, params.activity_id)
 
-    elif name == "tw_tag_new_zone":
-        params = TagNewZoneInput.model_validate(arguments)
-        result = await thresholds_mod.tag_new_zone(client, params.zone_type, params.activity_id)
+        elif name == "tw_tag_new_zone":
+            params = TagNewZoneInput.model_validate(arguments)
+            result = await thresholds_mod.tag_new_zone(client, params.zone_type, params.activity_id)
 
-    elif name == "tw_get_max_value_detections":
-        result = await max_values_mod.get_max_value_detections(client)
+        elif name == "tw_get_max_value_detections":
+            result = await max_values_mod.get_max_value_detections(client)
 
-    elif name == "tw_respond_max_value":
-        params = RespondMaxValueInput.model_validate(arguments)
-        result = await max_values_mod.respond_max_value(client, params.detection_id, params.accept)
+        elif name == "tw_respond_max_value":
+            params = RespondMaxValueInput.model_validate(arguments)
+            result = await max_values_mod.respond_max_value(client, params.detection_id, params.accept)
 
-    elif name == "tw_get_activity_logs":
-        params = GetActivityInput.model_validate(arguments)
-        result = await activity_files_mod.get_activity_logs(client, params.activity_id)
+        elif name == "tw_get_activity_logs":
+            params = GetActivityInput.model_validate(arguments)
+            result = await activity_files_mod.get_activity_logs(client, params.activity_id)
 
-    elif name == "tw_get_activity_strap_files":
-        params = GetActivityInput.model_validate(arguments)
-        result = await activity_files_mod.get_activity_strap_files(client, params.activity_id)
+        elif name == "tw_get_activity_strap_files":
+            params = GetActivityInput.model_validate(arguments)
+            result = await activity_files_mod.get_activity_strap_files(client, params.activity_id)
 
-    elif name == "tw_export_activity_strap_files":
-        params = ExportInput.model_validate(arguments)
-        result = await activity_files_mod.export_activity_strap_files(client, params.activity_id)
+        elif name == "tw_export_activity_strap_files":
+            params = ExportInput.model_validate(arguments)
+            result = await activity_files_mod.export_activity_strap_files(client, params.activity_id)
 
-    elif name == "tw_get_activity_workout_zone_detection":
-        params = GetActivityInput.model_validate(arguments)
-        result = await activity_files_mod.get_activity_workout_zone_detection(client, params.activity_id)
+        elif name == "tw_get_activity_workout_zone_detection":
+            params = GetActivityInput.model_validate(arguments)
+            result = await activity_files_mod.get_activity_workout_zone_detection(client, params.activity_id)
 
-    elif name == "tw_get_resting_max_values":
-        result = await physiology_mod.get_resting_max_values(client)
+        elif name == "tw_get_resting_max_values":
+            result = await physiology_mod.get_resting_max_values(client)
 
-    elif name == "tw_get_training_plan":
-        profile = await profile_mod.get_profile(client)
-        result = await training_plans_mod.get_training_plan(client, profile["uuid"])
+        elif name == "tw_get_training_plan":
+            profile = await profile_mod.get_profile(client)
+            result = await training_plans_mod.get_training_plan(client, profile["uuid"])
 
-    elif name == "tw_get_training_plan_by_date":
-        params = TrainingPlanByDateInput.model_validate(arguments)
-        profile = await profile_mod.get_profile(client)
-        result = await training_plans_mod.get_training_plan_by_date(client, profile["uuid"], params.date)
+        elif name == "tw_get_training_plan_by_date":
+            params = TrainingPlanByDateInput.model_validate(arguments)
+            profile = await profile_mod.get_profile(client)
+            result = await training_plans_mod.get_training_plan_by_date(client, profile["uuid"], params.date)
 
-    elif name == "tw_get_training_plan_by_week":
-        params = TrainingPlanByWeekInput.model_validate(arguments)
-        profile = await profile_mod.get_profile(client)
-        result = await training_plans_mod.get_training_plan_by_week(client, profile["uuid"], params.week)
+        elif name == "tw_get_training_plan_by_week":
+            params = TrainingPlanByWeekInput.model_validate(arguments)
+            profile = await profile_mod.get_profile(client)
+            result = await training_plans_mod.get_training_plan_by_week(client, profile["uuid"], params.week)
 
-    elif name == "tw_get_training_plan_history":
-        profile = await profile_mod.get_profile(client)
-        result = await training_plans_mod.get_training_plan_history(client, profile["uuid"])
+        elif name == "tw_get_training_plan_history":
+            profile = await profile_mod.get_profile(client)
+            result = await training_plans_mod.get_training_plan_history(client, profile["uuid"])
 
-    elif name == "tw_get_training_plan_config":
-        profile = await profile_mod.get_profile(client)
-        result = await training_plans_mod.get_training_plan_config(client, profile["uuid"])
+        elif name == "tw_get_training_plan_config":
+            profile = await profile_mod.get_profile(client)
+            result = await training_plans_mod.get_training_plan_config(client, profile["uuid"])
 
-    elif name == "tw_get_training_plan_preview":
-        profile = await profile_mod.get_profile(client)
-        result = await training_plans_mod.get_training_plan_preview(client, profile["uuid"])
+        elif name == "tw_get_training_plan_preview":
+            profile = await profile_mod.get_profile(client)
+            result = await training_plans_mod.get_training_plan_preview(client, profile["uuid"])
 
-    elif name == "tw_get_workout_recommendation":
-        profile = await profile_mod.get_profile(client)
-        result = await training_plans_mod.get_workout_recommendation(client, profile["id"])
+        elif name == "tw_get_workout_recommendation":
+            profile = await profile_mod.get_profile(client)
+            result = await training_plans_mod.get_workout_recommendation(client, profile["id"])
 
-    elif name == "tw_get_integrations":
-        result = await integrations_mod.get_integrations(client)
+        elif name == "tw_get_integrations":
+            result = await integrations_mod.get_integrations(client)
 
-    elif name == "tw_get_integration":
-        params = IntegrationInput.model_validate(arguments)
-        result = await integrations_mod.get_integration(client, params.integration_id)
+        elif name == "tw_get_integration":
+            params = IntegrationInput.model_validate(arguments)
+            result = await integrations_mod.get_integration(client, params.integration_id)
 
-    elif name == "tw_get_integration_health":
-        params = IntegrationInput.model_validate(arguments)
-        result = await integrations_mod.get_integration_health(client, params.integration_id)
+        elif name == "tw_get_integration_health":
+            params = IntegrationInput.model_validate(arguments)
+            result = await integrations_mod.get_integration_health(client, params.integration_id)
 
-    elif name == "tw_get_subscription_status":
-        result = await account_mod.get_subscription_status(client)
+        elif name == "tw_get_subscription_status":
+            result = await account_mod.get_subscription_status(client)
 
-    elif name == "tw_get_subscription_plans":
-        result = await account_mod.get_subscription_plans(client)
+        elif name == "tw_get_subscription_plans":
+            result = await account_mod.get_subscription_plans(client)
 
-    elif name == "tw_export_csv":
-        params = ExportInput.model_validate(arguments)
-        result = await exports_mod.export_csv(client, params.activity_id)
+        elif name == "tw_export_csv":
+            params = ExportInput.model_validate(arguments)
+            result = await exports_mod.export_csv(client, params.activity_id)
 
-    elif name == "tw_export_csv_full":
-        params = ExportInput.model_validate(arguments)
-        result = await exports_mod.export_csv_full(client, params.activity_id)
+        elif name == "tw_export_csv_full":
+            params = ExportInput.model_validate(arguments)
+            result = await exports_mod.export_csv_full(client, params.activity_id)
 
-    elif name == "tw_export_fit":
-        params = ExportInput.model_validate(arguments)
-        result = await exports_mod.export_fit(client, params.activity_id)
+        elif name == "tw_export_fit":
+            params = ExportInput.model_validate(arguments)
+            result = await exports_mod.export_fit(client, params.activity_id)
 
-    else:
-        result = {"error": f"Unknown tool: {name}"}
+        else:
+            result = {"error": f"Unknown tool: {name}"}
+    except ValidationError:
+        if not _public_mode:
+            raise
+        result = _public_validation_error_result()
+    finally:
+        if _public_mode:
+            await client.close()
 
     return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
 

@@ -8,7 +8,11 @@ build/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.vercel/
 *.enc
 .env
 .env.*
+*.token
+*.secret
 *.log
+exports/

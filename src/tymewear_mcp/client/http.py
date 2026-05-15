@@ -46,9 +46,13 @@ def _sanitize_url(value: str) -> str:
 class TymeClient:
     """Async HTTP client with token caching and auto re-authentication."""
 
-    def __init__(self, credentials: dict[str, str]) -> None:
+    def __init__(self, credentials: dict[str, str] | None = None, *, access_token: str | None = None) -> None:
+        if credentials is None and access_token is None:
+            raise ValueError("TymeClient requires credentials or an access token")
+        if credentials is not None and access_token is not None:
+            raise ValueError("TymeClient accepts either credentials or an access token, not both")
         self._credentials = credentials
-        self._token: str | None = None
+        self._token: str | None = access_token
         self._http = httpx.AsyncClient(base_url=BASE_URL, timeout=DEFAULT_TIMEOUT)
         self._last_request_time: float = 0.0
         self._auth_lock = asyncio.Lock()
@@ -67,6 +71,8 @@ class TymeClient:
             return self._token
 
     async def _signin(self) -> None:
+        if self._credentials is None:
+            raise RuntimeError("TymeClient access-token mode cannot sign in with stored credentials")
         logger.debug("Signing in to Tyme Wear API")
         resp = await self._http.post(
             "/api/session/signin/",
@@ -116,6 +122,8 @@ class TymeClient:
                 refreshed = await self._refresh()
                 if not refreshed:
                     self._token = None
+                    if self._credentials is None:
+                        resp.raise_for_status()
                     await self._signin()
             kwargs["headers"].update(self._auth_headers())
             await self._rate_limit()
@@ -142,6 +150,8 @@ class TymeClient:
                 refreshed = await self._refresh()
                 if not refreshed:
                     self._token = None
+                    if self._credentials is None:
+                        resp.raise_for_status()
                     await self._signin()
             kwargs["headers"].update(self._auth_headers())
             await self._rate_limit()

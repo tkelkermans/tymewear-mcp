@@ -102,6 +102,26 @@ def cmd_serve(args: argparse.Namespace) -> None:
     run_server()
 
 
+def cmd_serve_public(args: argparse.Namespace) -> None:
+    """Start the public Streamable HTTP MCP server."""
+    import uvicorn
+
+    from tymewear_mcp.public import PublicServerConfig, build_public_app
+
+    config = PublicServerConfig.from_env(
+        public_url=args.public_url,
+        allowed_hosts=args.allowed_host,
+        allowed_origins=args.allowed_origin,
+        issuer_url=args.issuer_url,
+        mcp_path=args.path,
+        json_response=args.json_response,
+        allow_mutations=args.allow_mutations,
+        max_body_bytes=args.max_body_bytes,
+    )
+    app = build_public_app(config)
+    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="tymewear-mcp", description="Tyme Wear MCP Server")
     subparsers = parser.add_subparsers(dest="command")
@@ -117,6 +137,52 @@ def main() -> None:
     subparsers.add_parser("auth-clear", help="Remove stored credentials")
     subparsers.add_parser("config", help="Output Claude Desktop config snippet")
     subparsers.add_parser("serve", help="Start MCP server")
+    public_parser = subparsers.add_parser("serve-public", help="Start public Streamable HTTP MCP server")
+    public_parser.add_argument("--host", default="127.0.0.1", help="Bind host for the HTTP server")
+    public_parser.add_argument("--port", type=int, default=8000, help="Bind port for the HTTP server")
+    public_parser.add_argument(
+        "--public-url",
+        help="Canonical public MCP URL, for example https://mcp.example.com/mcp "
+        "(or set TYMEWEAR_PUBLIC_URL)",
+    )
+    public_parser.add_argument("--path", default="/mcp", help="MCP Streamable HTTP path")
+    public_parser.add_argument(
+        "--issuer-url",
+        help="OAuth authorization server issuer URL for protected resource metadata "
+        "(or set TYMEWEAR_PUBLIC_ISSUER_URL)",
+    )
+    public_parser.add_argument(
+        "--allowed-host",
+        action="append",
+        help="Allowed Host header value. Repeat for multiple hosts. Defaults to the host in --public-url.",
+    )
+    public_parser.add_argument(
+        "--allowed-origin",
+        action="append",
+        help="Allowed Origin header value. Repeat for multiple origins. Defaults to the origin in --public-url.",
+    )
+    public_parser.add_argument(
+        "--json-response",
+        action="store_true",
+        help="Use JSON responses for Streamable HTTP requests instead of SSE streams.",
+    )
+    public_parser.add_argument(
+        "--allow-mutations",
+        action="store_true",
+        help="Expose public profile/activity mutation tools. Public deployments are read-only by default.",
+    )
+    public_parser.add_argument(
+        "--max-body-bytes",
+        type=int,
+        help="Maximum accepted public HTTP request body size in bytes "
+        "(or set TYMEWEAR_PUBLIC_MAX_BODY_BYTES). Defaults to 1048576.",
+    )
+    public_parser.add_argument(
+        "--log-level",
+        default="info",
+        choices=["critical", "error", "warning", "info", "debug", "trace"],
+        help="uvicorn log level",
+    )
     subparsers.add_parser("help", help="Show help")
 
     args = parser.parse_args()
@@ -127,6 +193,7 @@ def main() -> None:
         "auth-clear": cmd_auth_clear,
         "config": cmd_config,
         "serve": cmd_serve,
+        "serve-public": cmd_serve_public,
         "help": lambda _: parser.print_help(),
     }
 
