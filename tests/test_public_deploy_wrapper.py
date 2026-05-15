@@ -170,6 +170,35 @@ fi
     )
 
 
+def test_deploy_wrapper_prints_failed_deploy_output(tmp_path):
+    token_file = _write_token_file(tmp_path / "token")
+    (tmp_path / ".vercel").mkdir()
+    (tmp_path / ".vercel" / "project.json").write_text("{}", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_fake_vercel(
+        bin_dir,
+        """
+if [ "${1:-}" = "env" ]; then
+  cat >/dev/null
+elif [ "${1:-}" = "deploy" ]; then
+  printf '%s\\n' "build failed for a visible reason"
+  exit 1
+fi
+""",
+    )
+
+    result = _run_wrapper(
+        tmp_path,
+        "--token-file",
+        str(token_file),
+        extra_env={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 1
+    assert "build failed for a visible reason" in result.stdout
+
+
 def test_deploy_wrapper_verifies_explicit_mcp_url_override(tmp_path):
     token_file = _write_token_file(tmp_path / "token")
     (tmp_path / ".vercel").mkdir()

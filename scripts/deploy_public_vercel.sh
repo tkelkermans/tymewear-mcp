@@ -149,8 +149,14 @@ echo "Uploading TYMEWEAR_PUBLIC_BEARER_TOKENS as a sensitive Vercel production e
 vercel env "$ENV_ACTION" TYMEWEAR_PUBLIC_BEARER_TOKENS production --sensitive --yes --non-interactive < "$TOKEN_FILE"
 
 echo "Deploying public Tymewear MCP to Vercel production..."
+set +e
 DEPLOY_OUTPUT="$(vercel deploy --prod --yes --non-interactive 2>&1)"
+DEPLOY_STATUS=$?
+set -e
 printf '%s\n' "$DEPLOY_OUTPUT"
+if [ "$DEPLOY_STATUS" -ne 0 ]; then
+  exit "$DEPLOY_STATUS"
+fi
 
 DEPLOY_URL="$(printf '%s\n' "$DEPLOY_OUTPUT" | awk '/Production:/ {for (i = 1; i <= NF; i++) if ($i ~ "^https://") print $i}' | tail -n 1)"
 if [ -z "$DEPLOY_URL" ]; then

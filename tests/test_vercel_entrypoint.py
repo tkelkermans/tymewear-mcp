@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,7 @@ from starlette.applications import Starlette
 
 
 def _load_entrypoint_module(name: str):
-    entrypoint = Path(__file__).resolve().parents[1] / "app.py"
+    entrypoint = Path(__file__).resolve().parents[1] / "api" / "index.py"
     spec = importlib.util.spec_from_file_location(name, entrypoint)
     assert spec is not None
     assert spec.loader is not None
@@ -37,3 +38,14 @@ def test_vercel_entrypoint_fails_closed_without_public_bearer_token(monkeypatch)
 
     with pytest.raises(ValueError, match="TYMEWEAR_PUBLIC_BEARER_TOKENS"):
         _load_entrypoint_module("vercel_entrypoint_missing_token_test")
+
+
+def test_vercel_json_configures_api_entrypoint():
+    vercel_config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text())
+
+    assert "functions" not in vercel_config
+    assert {rewrite["source"] for rewrite in vercel_config["rewrites"]} >= {
+        "/healthz",
+        "/mcp",
+        "/.well-known/:path*",
+    }

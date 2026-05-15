@@ -103,7 +103,7 @@ docker run --rm -p 8000:8000 \
 
 ### Vercel
 
-The repo also includes a Vercel ASGI entrypoint (`app.py`) and `vercel.json`. Link the repository to the intended Vercel project first, then configure at least `TYMEWEAR_PUBLIC_BEARER_TOKENS` in that project before deploying it. The entrypoint fails closed if the public bearer token env is absent. `TYMEWEAR_PUBLIC_URL` is recommended for production aliases, but preview deployments can derive it from Vercel's deployment URL.
+The repo also includes a Vercel ASGI entrypoint (`api/index.py`) and `vercel.json`. Link the repository to the intended Vercel project first, then configure at least `TYMEWEAR_PUBLIC_BEARER_TOKENS` in that project before deploying it. The entrypoint fails closed if the public bearer token env is absent. `TYMEWEAR_PUBLIC_URL` is recommended for production aliases, but preview deployments can derive it from Vercel's deployment URL.
 
 ```bash
 TOKEN_FILE=/path/to/generated-public-bearer-token

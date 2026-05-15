@@ -21,8 +21,8 @@ Create a public version of Tymewear MCP, expose it on the Internet, never store 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
 | Public MCP server mode exists | `src/tymewear_mcp/public.py`; `tymewear-mcp serve-public` in `src/tymewear_mcp/cli.py`; public route tests in `tests/test_public.py` | Done |
-| Internet-compatible MCP transport | Stateless Streamable HTTP ASGI app on `/mcp`; `/healthz` public status route; `app.py` Vercel ASGI entrypoint with import coverage under Vercel-style runtime env and fail-closed coverage when public bearer-token env is absent | Done |
-| Deployable artifact for Internet hosting | `Dockerfile`, `.dockerignore`, `app.py`, `vercel.json`, `.vercelignore`, `scripts/deploy_public_vercel.sh`; Vercel bundle excludes local `scripts/**` tooling; Docker and Vercel upload ignores exclude local metadata, token/secret files, tests/docs/scripts, generated caches, and exports | Done locally |
+| Internet-compatible MCP transport | Stateless Streamable HTTP ASGI app on `/mcp`; `/healthz` public status route; `api/index.py` Vercel ASGI entrypoint with import coverage under Vercel-style runtime env and fail-closed coverage when public bearer-token env is absent | Done |
+| Deployable artifact for Internet hosting | `Dockerfile`, `.dockerignore`, `api/index.py`, `.python-version`, `uv.lock`, `vercel.json`, `.vercelignore`, `scripts/deploy_public_vercel.sh`; Vercel bundle excludes local `scripts/**` tooling; Docker and Vercel upload ignores exclude local metadata, token/secret files, tests/docs/scripts, generated caches, and exports | Done |
 | TLS deployment guidance | `README.md` public deployment section requires edge TLS and canonical HTTPS `TYMEWEAR_PUBLIC_URL` | Done as guidance |
 | No anonymous access | Public MCP route requires `Authorization: Bearer <server token>`; unauthenticated `/mcp` tests expect 401; Vercel entrypoint import fails when public bearer-token env is absent | Done |
 | Bearer token hardening | `TYMEWEAR_PUBLIC_BEARER_TOKENS`; startup rejects tokens shorter than 32 characters; constant-time comparison via verifier logic; deployment wrapper validates token files before Vercel calls and rejects bearer-token files that are accessible by group or others | Done |
@@ -38,8 +38,8 @@ Create a public version of Tymewear MCP, expose it on the Internet, never store 
 | Public URL route consistency | Public mode and the post-deploy verifier reject public MCP URL params, query strings, and fragments; public mode rejects paths that do not match the mounted MCP route path, and `mcp_path` is validated as a plain URL path | Done |
 | Safe deployment runbook | `README.md` documents Vercel project or repo linking, `chmod 600 "$TOKEN_FILE"`, env injection using `--sensitive --yes` from a token file before deployment, the entrypoint fail-closed behavior when public bearer-token env is absent, and optional `PYTHON=/path/to/python` verifier interpreter selection; wrapper uploads the token through stdin with `--sensitive --yes --non-interactive`, disables Vercel update notifications, requires `.vercel/project.json` or `.vercel/repo.json`, extracts Vercel deployment URLs with portable awk string regex patterns, enforces owner-only token-file permissions where file mode can be inspected, and verifies from token file without printing secrets. `tests/test_public_deploy_wrapper.py` covers wrapper preflight behavior, token-file permission rejection, inferred verifier URLs, and explicit `--mcp-url` overrides with fake Vercel/Python calls. `.gitignore` excludes local Vercel metadata, ad hoc token/secret files, and export folders | Done |
 | No secret material in repo artifacts | Local leakage audit searched env assignments, bearer/upstream token literals, private-key headers, API key/secret patterns, env/token/secret/credential files, and the generated bearer token value with `rg -f /private/tmp/tymewear_public_bearer_token`; only README placeholders matched, and the generated bearer token was not found. Fresh check with `rg -l --fixed-strings -f /private/tmp/tymewear_public_bearer_token .` returned no matches | Done |
-| Live Internet exposure | Production deployment to Vercel or equivalent TLS host, configured with runtime bearer secret and verified live URL | Open |
-| Live verification evidence | `scripts/verify_public_endpoint.py` output against the actual public MCP URL | Open |
+| Live Internet exposure | Production Vercel deployment in `tristan-kelkermans-projects/tymewear-mcp`, configured with sensitive `TYMEWEAR_PUBLIC_BEARER_TOKENS` and `TYMEWEAR_PUBLIC_URL=https://tymewear-mcp.vercel.app/mcp`; live URL is `https://tymewear-mcp.vercel.app/mcp` | Done |
+| Live verification evidence | `scripts/deploy_public_vercel.sh --token-file /private/tmp/tymewear_public_bearer_token --env-action update --mcp-url https://tymewear-mcp.vercel.app/mcp` passed health, unauthenticated rejection, authenticated initialize, and authenticated `tools/list` | Done |
 
 ## Verification Evidence
 
@@ -55,6 +55,15 @@ Fresh local implementation evidence:
 - Local runtime smoke returned `/healthz` 200 and unauthenticated `/mcp` 401.
 
 Recent deployment-tooling evidence:
+
+- Live production deployment passed on Vercel: project `tristan-kelkermans-projects/tymewear-mcp`, deployment `dpl_DRrwbrPhK1VQNRBssV5P8mHH8KXw`, production alias `https://tymewear-mcp.vercel.app`, public MCP URL `https://tymewear-mcp.vercel.app/mcp`.
+- Live verifier output against the production alias:
+  - `ok healthz https://tymewear-mcp.vercel.app/healthz`
+  - `ok unauthenticated /mcp rejected with 401`
+  - `ok authenticated /mcp initialize`
+  - `ok authenticated /mcp tools/list`
+- Vercel packaging fix verified: `api/index.py` is the Python ASGI entrypoint; `vercel.json` keeps only rewrites because the linked Vercel project is a Python framework project whose `@vercel/python` builder detects the entrypoint itself. Local `NO_UPDATE_NOTIFIER=1 vercel build --prod --yes --debug` completed successfully after this change.
+- Final post-deploy local verification passed with `./.venv/bin/python -m pytest tests/ -q` (`293 passed`), `./.venv/bin/ruff check api src tests scripts`, `./.venv/bin/mypy src api scripts/verify_public_endpoint.py`, `git diff --check`, no fixed-string generated bearer-token repo matches, and no generated Python artifacts under `api`, `src`, `tests`, or `scripts`. Local `.vercel/.env.production.local`, `.vercel/output`, and `.vercel/python` artifacts created during deployment debugging were removed; `.vercel/project.json` remains as ignored link metadata.
 
 - Final evidence refresh passed with `./.venv/bin/python -m pytest tests/ -q` (`291 passed`), `./.venv/bin/ruff check app.py src tests scripts`, `./.venv/bin/mypy src app.py scripts/verify_public_endpoint.py`, and `git diff --check`. Generated Python caches were removed and verified absent, the generated bearer-token fixed-string search found no repo matches, and `.vercel/project.json` / `.vercel/repo.json` are still absent.
 - Vercel packaging readiness scan inspected `.vercelignore`, `vercel.json`, top-level files, and `src/` contents to confirm runtime files remain packageable while tests/docs/scripts/caches/secrets/export artifacts are ignored or excluded. A generated root `__pycache__` from entrypoint import checks was removed, then `find . -type d -name __pycache__` returned no directories, `git diff --check` passed, and the generated bearer-token fixed-string search found no repo matches.
@@ -86,11 +95,6 @@ Recent deployment-tooling evidence:
 
 ## Current Completion Decision
 
-Do not mark the active goal complete yet.
+The active goal is complete.
 
-The repository contains a public, Internet-capable implementation and a safe deployment path, but the explicit objective includes public Internet exposure. That requirement is not satisfied until:
-
-1. The user explicitly approves the third-party production deployment and secret upload.
-2. The server is deployed to an Internet-reachable TLS URL.
-3. The live URL passes `scripts/verify_public_endpoint.py`.
-4. The final public MCP URL and verifier result are recorded in `tasks/todo.md`.
+The user explicitly approved the third-party production deployment and sensitive bearer-token upload after the storage risk was stated. The public server is deployed to the TLS URL `https://tymewear-mcp.vercel.app/mcp`, the stable production alias passes the live verifier, and the final URL plus verifier result are recorded in `tasks/todo.md`.
