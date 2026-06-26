@@ -1,0 +1,54 @@
+name: CI / Deploy
+
+# Automates what scripts/deploy_public_vercel.sh did by hand:
+#   - every push / PR runs the test suite (ruff + mypy + pytest)
+#   - a push to main that passes tests deploys the public MCP to Vercel production,
+#     so the trainer's live instance picks up changes automatically.
+#
+# Required repo secret (Settings -> Secrets and variables -> Actions):
+#   VERCEL_TOKEN   a Vercel access token (Vercel -> Account Settings -> Tokens)
+# The org/project IDs below are not secret (they grant nothing without the token);
+# they match .vercel/project.json so CI can target the linked project.
+#
+# The runtime bearer token (TYMEWEAR_PUBLIC_BEARER_TOKENS) is already a sensitive
+# Vercel production env var and persists across deploys — rotate it with
+# scripts/deploy_public_vercel.sh, not here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (with dev extras)
+        run: pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check src/ tests/
+      - name: Mypy
+        run: mypy src/
+      - name: Pytest
+        run: pytest -q
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_qU2uxDpMNNlsQbGz9A7QjDej
+      VERCEL_PROJECT_ID: prj_pbafuZNwddYybzEbezCXEPO12SvI
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+      - name: Deploy to Vercel production
+        run: vercel deploy --prod --yes --token="$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

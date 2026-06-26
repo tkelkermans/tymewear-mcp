@@ -123,6 +123,16 @@ scripts/deploy_public_vercel.sh --token-file "$TOKEN_FILE"
 
 Set `PYTHON=/path/to/python` when the verifier should run with a specific interpreter, such as the repo virtual environment.
 
+### Automated deploy (CI/CD)
+
+`.github/workflows/deploy.yml` runs the test suite (ruff + mypy + pytest) on every push and pull request, and — when a push to `main` passes — deploys the public MCP to Vercel production automatically, so a hosted instance stays current without running the script by hand.
+
+To enable it, add one repository secret under **Settings → Secrets and variables → Actions**:
+
+- **`VERCEL_TOKEN`** — a Vercel access token (Vercel → Account Settings → Tokens).
+
+The org/project IDs are baked into the workflow (they are not secret and grant nothing without the token). The runtime `TYMEWEAR_PUBLIC_BEARER_TOKENS` env var persists in the Vercel project across deploys; rotate it with `scripts/deploy_public_vercel.sh`, not CI.
+
 ### Post-Deploy Verification
 
 After deployment, verify the public endpoint without printing secrets:
