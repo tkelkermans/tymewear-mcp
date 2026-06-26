@@ -247,3 +247,27 @@ async def test_get_activity_insights_route(monkeypatch):
     data = json.loads(result[0].text)
     assert data["thresholds"]["VT1"]["ve"] == 60.7
     assert data["ve_targets"]["vt2"] == 114.0
+
+
+async def test_compute_power_at_threshold_route(monkeypatch):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    monkeypatch.setattr(
+        server_mod.activity_files_mod, "get_activity_workout_zone_detection", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(
+        server_mod.activities_mod,
+        "get_activity",
+        AsyncMock(return_value={"id": "e4", "sport": "2", "new_zone_vt1": "01:00", "predict_ve_v3": [1.0]}),
+    )
+    monkeypatch.setattr(server_mod.profile_mod, "get_profile", AsyncMock(return_value={"bike_ve_target_vt1": 58.7}))
+
+    samples = [[float(t), 200.0] for t in range(50, 71)]
+    result = await server_mod.call_tool(
+        "tw_compute_power_at_threshold",
+        {"activity_id": "e4", "power_samples": samples, "window_seconds": 10},
+    )
+
+    data = json.loads(result[0].text)
+    assert data["power_at_threshold"]["vt1"]["power_watts"] == 200.0
+    assert data["power_at_threshold"]["vt1"]["at_seconds"] == 60

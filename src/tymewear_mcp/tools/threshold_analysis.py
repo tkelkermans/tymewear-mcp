@@ -122,3 +122,29 @@ def extract_activity_insights(
             "TrainingPeaks/Garmin ride, or use tw_compute_power_at_threshold."
         ),
     }
+
+
+def compute_power_at_threshold(
+    threshold_times: dict[str, int | None],
+    power_samples: list[list[float | None]],
+    window_seconds: int = 15,
+) -> dict[str, Any]:
+    """Average measured watts in a window around each detected breakpoint time.
+
+    Tyme Wear has no measured power, so the caller supplies the power series
+    ``[[t_seconds, watts], ...]`` from the matching TrainingPeaks/Garmin ride
+    (watts may be ``None`` for gaps).
+    """
+    series = [(float(t), float(w)) for t, w in power_samples if t is not None and w is not None]
+    out: dict[str, Any] = {}
+    for name, secs in threshold_times.items():
+        if secs is None:
+            out[name] = None
+            continue
+        window = [w for (t, w) in series if abs(t - secs) <= window_seconds]
+        out[name] = {
+            "power_watts": round(sum(window) / len(window), 1) if window else None,
+            "samples": len(window),
+            "at_seconds": secs,
+        }
+    return out

@@ -29,6 +29,7 @@ from tymewear_mcp.tools import thresholds as thresholds_mod
 from tymewear_mcp.tools import training_plans as training_plans_mod
 from tymewear_mcp.tools import zones as zones_mod
 from tymewear_mcp.tools._validation import (
+    ComputePowerAtThresholdInput,
     ExportInput,
     GetActivitiesInput,
     GetActivityDetailInput,
@@ -226,6 +227,15 @@ def _registered_tools() -> list[Tool]:
                 "quality flags, a truncated-test flag, and the athlete's VE targets. Works for tests and rides."
             ),
             inputSchema=GetActivityInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_compute_power_at_threshold",
+            description=(
+                "Join Tyme Wear's detected threshold times to an external power series and return mean watts at "
+                "VT1/VT2/VO2max/FatMax. Supply power_samples=[[t_seconds, watts], ...] from the matching "
+                "TrainingPeaks/Garmin ride — Tyme Wear has no measured power."
+            ),
+            inputSchema=ComputePowerAtThresholdInput.model_json_schema(),
         ),
         Tool(
             name="tw_get_zone_distribution",
@@ -469,6 +479,22 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             activity = await activities_mod.get_activity(client, params.activity_id, include=["predict_ve_v3"])
             profile = await profile_mod.get_profile(client)
             result = threshold_analysis_mod.extract_activity_insights(wzd, activity, profile)
+
+        elif name == "tw_compute_power_at_threshold":
+            params = ComputePowerAtThresholdInput.model_validate(arguments)
+            wzd = await activity_files_mod.get_activity_workout_zone_detection(client, params.activity_id)
+            activity = await activities_mod.get_activity(client, params.activity_id, include=["predict_ve_v3"])
+            profile = await profile_mod.get_profile(client)
+            insights = threshold_analysis_mod.extract_activity_insights(wzd, activity, profile)
+            times = {key: bp["time_seconds"] for key, bp in insights["detected_breakpoints"].items()}
+            result = {
+                "activity_id": params.activity_id,
+                "power_at_threshold": threshold_analysis_mod.compute_power_at_threshold(
+                    times, params.power_samples, params.window_seconds
+                ),
+                "ve_targets": insights["ve_targets"],
+                "truncated_test": insights["truncated_test"],
+            }
 
         elif name == "tw_get_zone_distribution":
             profile = await profile_mod.get_profile(client)

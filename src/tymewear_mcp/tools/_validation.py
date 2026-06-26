@@ -71,6 +71,19 @@ class GetActivityDetailInput(ActivityIdMixin):
     )
 
 
+class ComputePowerAtThresholdInput(ActivityIdMixin):
+    activity_id: str = Field(description="Tyme Wear activity UUID to read detected threshold times from")
+    power_samples: list[list[float | None]] = Field(
+        description=(
+            "Power series as [[t_seconds, watts], ...] from the matching TrainingPeaks/Garmin ride "
+            "(watts may be null for gaps)"
+        ),
+    )
+    window_seconds: int = Field(
+        default=15, ge=0, le=120, description="Averaging half-window (seconds) around each breakpoint"
+    )
+
+
 class GetProcessedDataInput(ActivityIdMixin):
     activity_id: str = Field(description="Activity UUID")
     mode: Literal["summary", "window", "full"] = Field(

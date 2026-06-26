@@ -1,6 +1,10 @@
 """Tests for per-activity insight extraction."""
 
-from tymewear_mcp.tools.threshold_analysis import _mmss_to_seconds, extract_activity_insights
+from tymewear_mcp.tools.threshold_analysis import (
+    _mmss_to_seconds,
+    compute_power_at_threshold,
+    extract_activity_insights,
+)
 
 PROFILE = {
     "bike_ve_target_vt1": 58.7, "bike_ve_target_bp": 77.6,
@@ -85,3 +89,25 @@ def test_regular_ride_no_breakpoints_but_has_thresholds():
     assert r["detected_breakpoints"] == {}
     assert r["ve_curve_available"] is False
     assert r["truncated_test"] is False
+
+
+def test_power_at_threshold_windowed_mean():
+    samples = [[float(t), 100.0 + t] for t in range(0, 120)]  # watts ramps 100..219 with time
+    times = {"vt1": 60, "vt2": None}
+    r = compute_power_at_threshold(times, samples, window_seconds=5)
+    assert r["vt1"]["samples"] == 11  # seconds 55..65 inclusive
+    assert r["vt1"]["power_watts"] == 160.0  # mean of 155..165
+    assert r["vt1"]["at_seconds"] == 60
+    assert r["vt2"] is None
+
+
+def test_power_at_threshold_no_samples_in_window():
+    r = compute_power_at_threshold({"vt1": 5000}, [[0.0, 200.0]], window_seconds=15)
+    assert r["vt1"]["power_watts"] is None
+    assert r["vt1"]["samples"] == 0
+
+
+def test_power_at_threshold_ignores_null_watts():
+    r = compute_power_at_threshold({"vt1": 10}, [[10.0, None], [11.0, 250.0]], window_seconds=5)
+    assert r["vt1"]["power_watts"] == 250.0
+    assert r["vt1"]["samples"] == 1
