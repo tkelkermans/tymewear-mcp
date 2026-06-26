@@ -90,8 +90,8 @@ if [ ! -s "$TOKEN_FILE" ]; then
   exit 2
 fi
 
-TOKEN_MODE="$(stat -f '%Lp' "$TOKEN_FILE" 2>/dev/null || stat -c '%a' "$TOKEN_FILE" 2>/dev/null || true)"
-if [ -n "$TOKEN_MODE" ]; then
+TOKEN_MODE="$(stat -c '%a' "$TOKEN_FILE" 2>/dev/null || stat -f '%Lp' "$TOKEN_FILE" 2>/dev/null || true)"
+if printf '%s' "$TOKEN_MODE" | grep -qE '^[0-7]+$'; then
   TOKEN_MODE_DEC=$((8#$TOKEN_MODE))
   if [ $((TOKEN_MODE_DEC & 077)) -ne 0 ]; then
     echo "token file must not be accessible by group or others: $TOKEN_FILE" >&2
