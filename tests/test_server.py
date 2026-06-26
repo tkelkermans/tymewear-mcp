@@ -221,3 +221,29 @@ async def test_training_plan_date_and_week_routes_validate_and_pass_value(
 
     route.assert_awaited_once_with(mock_client, "user-uuid", expected_extra)
     assert json.loads(result[0].text) == {"tool": tool_name}
+
+
+async def test_get_activity_insights_route(monkeypatch):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    monkeypatch.setattr(
+        server_mod.activity_files_mod,
+        "get_activity_workout_zone_detection",
+        AsyncMock(return_value={"thresholds_zone": {"VT1": {"VE": 60.7, "HR": 131.0, "confidence": "high"}}}),
+    )
+    monkeypatch.setattr(
+        server_mod.activities_mod,
+        "get_activity",
+        AsyncMock(return_value={"id": "e4", "sport": "2", "sport_display": "Bike"}),
+    )
+    monkeypatch.setattr(
+        server_mod.profile_mod,
+        "get_profile",
+        AsyncMock(return_value={"bike_ve_target_vt2": 114.0}),
+    )
+
+    result = await server_mod.call_tool("tw_get_activity_insights", {"activity_id": "e4"})
+
+    data = json.loads(result[0].text)
+    assert data["thresholds"]["VT1"]["ve"] == 60.7
+    assert data["ve_targets"]["vt2"] == 114.0

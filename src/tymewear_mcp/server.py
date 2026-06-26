@@ -24,6 +24,7 @@ from tymewear_mcp.tools import integrations as integrations_mod
 from tymewear_mcp.tools import max_values as max_values_mod
 from tymewear_mcp.tools import physiology as physiology_mod
 from tymewear_mcp.tools import profile as profile_mod
+from tymewear_mcp.tools import threshold_analysis as threshold_analysis_mod
 from tymewear_mcp.tools import thresholds as thresholds_mod
 from tymewear_mcp.tools import training_plans as training_plans_mod
 from tymewear_mcp.tools import zones as zones_mod
@@ -216,6 +217,15 @@ def _registered_tools() -> list[Tool]:
             name="tw_get_ve_targets",
             description="Get current VE threshold targets (VT1, BP, VT2, VO2max) per sport for the athlete.",
             inputSchema={"type": "object", "properties": {}, "required": []},
+        ),
+        Tool(
+            name="tw_get_activity_insights",
+            description=(
+                "Compact, labeled per-activity report: VT1/VT2/Endurance VE+HR+confidence and estimated power, "
+                "detected breakpoint times with the displayed power profile (tests), per-zone time/calories, "
+                "quality flags, a truncated-test flag, and the athlete's VE targets. Works for tests and rides."
+            ),
+            inputSchema=GetActivityInput.model_json_schema(),
         ),
         Tool(
             name="tw_get_zone_distribution",
@@ -452,6 +462,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         elif name == "tw_get_ve_targets":
             profile = await profile_mod.get_profile(client)
             result = thresholds_mod.get_ve_targets(profile)
+
+        elif name == "tw_get_activity_insights":
+            params = GetActivityInput.model_validate(arguments)
+            wzd = await activity_files_mod.get_activity_workout_zone_detection(client, params.activity_id)
+            activity = await activities_mod.get_activity(client, params.activity_id, include=["predict_ve_v3"])
+            profile = await profile_mod.get_profile(client)
+            result = threshold_analysis_mod.extract_activity_insights(wzd, activity, profile)
 
         elif name == "tw_get_zone_distribution":
             profile = await profile_mod.get_profile(client)
