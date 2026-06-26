@@ -5,15 +5,16 @@ from tymewear_mcp.tools.thresholds import get_ve_targets, tag_new_zone, tag_thre
 
 
 class TestGetVeTargets:
-    async def test_returns_targets(self):
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
-            return_value={"bike_vt1": 60.0, "bike_bp": 80.0, "bike_vt2": 110.0, "bike_vo2max": 160.0}
-        )
-        mock_client.sanitize = lambda d: d
-        result = await get_ve_targets(mock_client, user_id=99999)
-        mock_client.get.assert_called_once_with("/api/users/99999/ve-targets/")
-        assert result["bike_vt1"] == 60.0
+    def test_targets_from_profile(self):
+        profile = {
+            "bike_ve_target_vt1": 58.7, "bike_ve_target_bp": 77.6,
+            "bike_ve_target_vt2": 114.0, "bike_ve_target_vo2max": 158.3,
+            "running_ve_target_vt1": 0.0, "running_ve_target_bp": 0.0,
+            "running_ve_target_vt2": 0.0, "running_ve_target_vo2max": 0.0,
+        }
+        result = get_ve_targets(profile)
+        assert result["bike"] == {"vt1": 58.7, "bp": 77.6, "vt2": 114.0, "vo2max": 158.3}
+        assert result["running"]["vt1"] == 0.0
 
 
 class TestTagThreshold:

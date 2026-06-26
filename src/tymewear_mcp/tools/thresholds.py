@@ -18,9 +18,17 @@ _NEW_ZONE_ENDPOINTS = {
 }
 
 
-async def get_ve_targets(client: TymeClient, user_id: int) -> dict[str, Any]:
-    data = await client.get(f"/api/users/{user_id}/ve-targets/")
-    return cast(dict[str, Any], client.sanitize(data))
+def get_ve_targets(profile: dict[str, Any]) -> dict[str, Any]:
+    """Assemble VE threshold targets from the profile.
+
+    The dedicated /ve-targets/ endpoint returns an empty body and crashes JSON
+    parsing, but the profile already carries every target per sport.
+    """
+
+    def _sport(prefix: str) -> dict[str, Any]:
+        return {key: profile.get(f"{prefix}_ve_target_{key}") for key in ("vt1", "bp", "vt2", "vo2max")}
+
+    return {"bike": _sport("bike"), "running": _sport("running")}
 
 
 async def tag_threshold(client: TymeClient, threshold_type: str, activity_id: str) -> dict[str, Any]:

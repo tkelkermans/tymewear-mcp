@@ -442,7 +442,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
         elif name == "tw_get_ve_targets":
             profile = await profile_mod.get_profile(client)
-            result = await thresholds_mod.get_ve_targets(client, user_id=profile["id"])
+            result = thresholds_mod.get_ve_targets(profile)
 
         elif name == "tw_get_zone_distribution":
             profile = await profile_mod.get_profile(client)
