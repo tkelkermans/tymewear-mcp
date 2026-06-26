@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+
 from tymewear_mcp.client.http import TymeClient
+from tymewear_mcp.tools._availability import unavailable_from_http_error
 
 
 def _summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -31,7 +34,12 @@ async def get_processed_data(
     client: TymeClient, activity_id: str, mode: str = "summary",
     window_start: int | None = None, window_end: int | None = None,
 ) -> dict[str, Any]:
-    data = await client.get(f"/v2/api/activities/{activity_id}/processed-data/")
+    try:
+        data = await client.get(f"/v2/api/activities/{activity_id}/processed-data/")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in {403, 404}:
+            return unavailable_from_http_error(exc, default_reason="processed_data_not_available")
+        raise
     records = data if isinstance(data, list) else []
     if mode == "summary":
         return _summarize(records)
@@ -42,5 +50,10 @@ async def get_processed_data(
 
 
 async def get_new_processed_data(client: TymeClient, activity_id: str) -> Any:
-    data = await client.get(f"/v2/api/activities/{activity_id}/new-processed-data/")
+    try:
+        data = await client.get(f"/v2/api/activities/{activity_id}/new-processed-data/")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in {403, 404}:
+            return unavailable_from_http_error(exc, default_reason="new_processed_data_not_available")
+        raise
     return client.sanitize(data) if isinstance(data, dict) else data

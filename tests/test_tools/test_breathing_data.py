@@ -2,6 +2,8 @@
 
 from unittest.mock import AsyncMock
 
+import httpx
+
 from tymewear_mcp.tools.breathing_data import get_new_processed_data, get_processed_data
 
 SAMPLE_TIMESERIES = [
@@ -53,3 +55,28 @@ class TestGetNewProcessedData:
         mock_client.sanitize = lambda d: d
         result = await get_new_processed_data(mock_client, "abc-123")
         assert result.get("detail") == "Not found."
+
+
+def _http_error(status: int) -> httpx.HTTPStatusError:
+    req = httpx.Request("GET", "https://api.tymewear.com/x")
+    resp = httpx.Response(status, json={"detail": "Not found."}, request=req)
+    return httpx.HTTPStatusError("err", request=req, response=resp)
+
+
+class TestProcessedDataUnavailable:
+    async def test_processed_data_404_graceful(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=_http_error(404))
+        mock_client.sanitize = lambda d: d
+        result = await get_processed_data(mock_client, "abc-123", mode="summary")
+        assert result["available"] is False
+        assert result["reason"] == "processed_data_not_available"
+        assert result["status_code"] == 404
+
+    async def test_new_processed_data_404_graceful(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=_http_error(404))
+        mock_client.sanitize = lambda d: d
+        result = await get_new_processed_data(mock_client, "abc-123")
+        assert result["available"] is False
+        assert result["reason"] == "new_processed_data_not_available"
