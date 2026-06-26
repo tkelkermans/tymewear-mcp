@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from tymewear_mcp.tools._validation import (
     ExportInput,
+    GetActivitiesInput,
     GetActivityInput,
     GetProcessedDataInput,
     TagNewZoneInput,
@@ -54,3 +55,26 @@ def test_activity_id_models_accept_safe_path_segments(model, extra, activity_id)
 def test_activity_id_models_reject_unsafe_path_segments(model, extra, activity_id):
     with pytest.raises(ValidationError):
         model(activity_id=activity_id, **extra)
+
+
+class TestSportCoercion:
+    def test_string_sport_coerced_to_int(self):
+        assert GetActivitiesInput.model_validate({"sport": "2"}).sport == 2
+
+    def test_int_sport_still_works(self):
+        assert GetActivitiesInput.model_validate({"sport": 2}).sport == 2
+
+    def test_none_sport(self):
+        assert GetActivitiesInput.model_validate({}).sport is None
+
+    def test_invalid_sport_rejected(self):
+        with pytest.raises(ValidationError):
+            GetActivitiesInput.model_validate({"sport": "bike"})
+
+    def test_sport_schema_allows_string_wire_value(self):
+        # The MCP SDK validates raw wire args against this published schema BEFORE
+        # pydantic coercion. A string "2" arriving over the wire must be permitted,
+        # otherwise tw_get_activities(sport=2) fails with "'2' is not valid".
+        sport_schema = GetActivitiesInput.model_json_schema()["properties"]["sport"]
+        variants = sport_schema.get("anyOf", [sport_schema])
+        assert any(v.get("type") == "string" for v in variants)

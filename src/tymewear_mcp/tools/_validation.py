@@ -35,7 +35,18 @@ class ActivityIdMixin(BaseModel):
 
 
 class GetActivitiesInput(BaseModel):
-    sport: int | None = Field(default=None, description="Legacy sport filter: 1=run, 2=bike")
+    sport: int | str | None = Field(default=None, description="Legacy sport filter: 1=run, 2=bike")
+
+    @field_validator("sport")
+    @classmethod
+    def _coerce_sport(cls, value: int | str | None) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            if not value.isdigit():
+                raise ValueError("sport must be 1 (run) or 2 (bike)")
+            return int(value)
+        return value
     sports: list[str] | None = Field(default=None, description="Website dashboard sport query param filters")
     activity_types: list[str] | None = Field(default=None, description="Website dashboard type query param filters")
     search: str | None = Field(default=None, description="Search activity names and metadata")
