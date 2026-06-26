@@ -9,9 +9,12 @@ import httpx
 
 from tymewear_mcp.client.http import TymeClient
 from tymewear_mcp.tools._availability import unavailable_from_http_error
+from tymewear_mcp.tools._slimming import slim_dict
 from tymewear_mcp.tools.exports import _extract_filename, _safe_export_filename
 
 EXPORT_DIR = Path.home() / "Downloads" / "tymewear"
+
+_HEAVY_WZD_FIELDS = frozenset({"times_zone", "ve_list_zone", "prob_list_zone", "transition_points_zone"})
 
 
 def _save_binary(resp: httpx.Response, activity_id: str, extension: str) -> dict[str, Any]:
@@ -63,7 +66,9 @@ async def export_activity_strap_files(client: TymeClient, activity_id: str) -> d
     return _save_binary(resp, activity_id, extension)
 
 
-async def get_activity_workout_zone_detection(client: TymeClient, activity_id: str) -> dict[str, Any]:
+async def get_activity_workout_zone_detection(
+    client: TymeClient, activity_id: str, include: list[str] | None = None
+) -> dict[str, Any]:
     try:
         data = await client.get(f"/v2/api/activities/{activity_id}/workout-zone-detection/")
     except httpx.HTTPStatusError as exc:
@@ -71,4 +76,7 @@ async def get_activity_workout_zone_detection(client: TymeClient, activity_id: s
             return unavailable_from_http_error(exc, default_reason="feature_not_available")
         raise
     sanitized = client.sanitize(data)
-    return {**sanitized, "available": True} if isinstance(sanitized, dict) else {"available": True, "data": sanitized}
+    if isinstance(sanitized, dict):
+        slimmed = slim_dict(sanitized, _HEAVY_WZD_FIELDS, include or [])
+        return {**slimmed, "available": True}
+    return {"available": True, "data": sanitized}

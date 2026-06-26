@@ -60,6 +60,17 @@ class GetActivityInput(ActivityIdMixin):
     activity_id: str = Field(description="Activity UUID")
 
 
+class GetActivityDetailInput(ActivityIdMixin):
+    activity_id: str = Field(description="Activity UUID")
+    include: list[str] | None = Field(
+        default=None,
+        description=(
+            "Heavy fields to return verbatim instead of summarising under _omitted_fields, "
+            "e.g. ['ext_bike_power','predict_ve_v3','times_zone']"
+        ),
+    )
+
+
 class GetProcessedDataInput(ActivityIdMixin):
     activity_id: str = Field(description="Activity UUID")
     mode: Literal["summary", "window", "full"] = Field(

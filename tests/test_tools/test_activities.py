@@ -160,3 +160,25 @@ class TestActivityFilters:
             "/v2/api/activities-cursor/",
             params={"user": 99999, "limit": 50},
         )
+
+
+class TestSlimActivity:
+    async def test_heavy_fields_omitted_by_default(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            return_value={**SAMPLE_ACTIVITY, "x": [0] * 100, "predict_ve_v3": [1.0] * 3231, "new_zone_vt1": "37:27"}
+        )
+        mock_client.sanitize = lambda d: d
+        result = await get_activity(mock_client, "abc-123")
+        assert "x" not in result
+        assert "predict_ve_v3" not in result
+        assert result["_omitted_fields"]["x"]["length"] == 100
+        assert result["new_zone_vt1"] == "37:27"
+
+    async def test_include_restores_field(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={**SAMPLE_ACTIVITY, "x": [0] * 100})
+        mock_client.sanitize = lambda d: d
+        result = await get_activity(mock_client, "abc-123", include=["x"])
+        assert result["x"] == [0] * 100
+        assert "_omitted_fields" not in result

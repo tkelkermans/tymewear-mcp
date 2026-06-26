@@ -141,3 +141,35 @@ class TestActivityFiles:
         assert result["available"] is False
         assert result["reason"] == "not_found"
         assert result["status_code"] == 404
+
+
+class TestWorkoutZoneDetectionSlimming:
+    async def test_heavy_arrays_omitted_labeled_tables_kept(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            return_value={
+                "thresholds_zone": {"VT1": {"VE": 60.7}},
+                "zone_summary_table": {"Total": 100},
+                "times_zone": list(range(3231)),
+                "transition_points_zone": {"VT1": {"HR": [1] * 50}},
+            }
+        )
+        mock_client.sanitize = lambda d: d
+
+        result = await get_activity_workout_zone_detection(mock_client, "abc-123")
+
+        assert "times_zone" not in result
+        assert "transition_points_zone" not in result
+        assert result["thresholds_zone"] == {"VT1": {"VE": 60.7}}
+        assert result["zone_summary_table"] == {"Total": 100}
+        assert result["available"] is True
+        assert result["_omitted_fields"]["times_zone"]["length"] == 3231
+
+    async def test_include_restores_heavy_array(self):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value={"thresholds_zone": {}, "times_zone": [1, 2, 3]})
+        mock_client.sanitize = lambda d: d
+
+        result = await get_activity_workout_zone_detection(mock_client, "abc-123", include=["times_zone"])
+
+        assert result["times_zone"] == [1, 2, 3]

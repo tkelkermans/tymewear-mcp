@@ -84,11 +84,6 @@ async def test_tw_get_activities_forwards_dashboard_filters(monkeypatch):
         ("tw_get_activity_logs", "activity_files_mod", "get_activity_logs"),
         ("tw_get_activity_strap_files", "activity_files_mod", "get_activity_strap_files"),
         ("tw_export_activity_strap_files", "activity_files_mod", "export_activity_strap_files"),
-        (
-            "tw_get_activity_workout_zone_detection",
-            "activity_files_mod",
-            "get_activity_workout_zone_detection",
-        ),
     ],
 )
 async def test_activity_file_routes_pass_activity_id(monkeypatch, tool_name, module_name, function_name):
@@ -101,6 +96,20 @@ async def test_activity_file_routes_pass_activity_id(monkeypatch, tool_name, mod
 
     route.assert_awaited_once_with(mock_client, "activity-uuid")
     assert json.loads(result[0].text) == {"tool": tool_name}
+
+
+async def test_workout_zone_detection_route_forwards_include(monkeypatch):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    route = AsyncMock(return_value={"tool": "tw_get_activity_workout_zone_detection"})
+    monkeypatch.setattr(server_mod.activity_files_mod, "get_activity_workout_zone_detection", route)
+
+    result = await server_mod.call_tool(
+        "tw_get_activity_workout_zone_detection", {"activity_id": "activity-uuid"}
+    )
+
+    route.assert_awaited_once_with(mock_client, "activity-uuid", include=None)
+    assert json.loads(result[0].text) == {"tool": "tw_get_activity_workout_zone_detection"}
 
 
 @pytest.mark.parametrize(

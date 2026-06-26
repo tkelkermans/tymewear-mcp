@@ -30,6 +30,7 @@ from tymewear_mcp.tools import zones as zones_mod
 from tymewear_mcp.tools._validation import (
     ExportInput,
     GetActivitiesInput,
+    GetActivityDetailInput,
     GetActivityInput,
     GetProcessedDataInput,
     IntegrationInput,
@@ -170,8 +171,12 @@ def _registered_tools() -> list[Tool]:
         ),
         Tool(
             name="tw_get_activity",
-            description="Get full detail for a single Tyme Wear activity including thresholds, zones, TSS, duration.",
-            inputSchema=GetActivityInput.model_json_schema(),
+            description=(
+                "Get full detail for a single Tyme Wear activity (thresholds, zones, TSS, duration). "
+                "Large per-second arrays (x, predict_*, ext_*) are summarised under _omitted_fields by default; "
+                "pass include=[...] to return specific heavy fields verbatim."
+            ),
+            inputSchema=GetActivityDetailInput.model_json_schema(),
         ),
         Tool(
             name="tw_get_activity_status",
@@ -254,8 +259,12 @@ def _registered_tools() -> list[Tool]:
         ),
         Tool(
             name="tw_get_activity_workout_zone_detection",
-            description="Get workout zone detection data for a Tyme Wear activity.",
-            inputSchema=GetActivityInput.model_json_schema(),
+            description=(
+                "Get labeled workout zone detection for an activity: per-zone time/calories, "
+                "VT1/VT2/Endurance VE+HR+confidence, quality flags, and estimated power. "
+                "Per-second point clouds are summarised under _omitted_fields; pass include=[...] for them verbatim."
+            ),
+            inputSchema=GetActivityDetailInput.model_json_schema(),
         ),
         Tool(
             name="tw_get_resting_max_values",
@@ -407,8 +416,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             )
 
         elif name == "tw_get_activity":
-            params = GetActivityInput.model_validate(arguments)
-            result = await activities_mod.get_activity(client, params.activity_id)
+            params = GetActivityDetailInput.model_validate(arguments)
+            result = await activities_mod.get_activity(client, params.activity_id, include=params.include)
 
         elif name == "tw_get_activity_status":
             params = GetActivityInput.model_validate(arguments)
@@ -476,8 +485,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await activity_files_mod.export_activity_strap_files(client, params.activity_id)
 
         elif name == "tw_get_activity_workout_zone_detection":
-            params = GetActivityInput.model_validate(arguments)
-            result = await activity_files_mod.get_activity_workout_zone_detection(client, params.activity_id)
+            params = GetActivityDetailInput.model_validate(arguments)
+            result = await activity_files_mod.get_activity_workout_zone_detection(
+                client, params.activity_id, include=params.include
+            )
 
         elif name == "tw_get_resting_max_values":
             result = await physiology_mod.get_resting_max_values(client)
