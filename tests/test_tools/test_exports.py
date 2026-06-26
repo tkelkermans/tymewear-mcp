@@ -157,3 +157,22 @@ class TestExportFit:
             await export_fit(mock_client, "abc-12345")
 
         mock_client.get_raw.assert_not_called()
+
+
+def _make_html_response(status: int = 200) -> Response:
+    return Response(
+        status_code=status,
+        content=b"<!DOCTYPE html>\n<html><head><title>404 Not Found</title></head></html>",
+        headers=Headers({"content-type": "text/html"}),
+    )
+
+
+class TestExportRejectsHtmlErrorPage:
+    async def test_csv_full_html_returns_unavailable(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("tymewear_mcp.tools.exports.EXPORT_DIR", tmp_path)
+        mock_client = AsyncMock()
+        mock_client.post_raw = AsyncMock(return_value=_make_html_response())
+        result = await export_csv_full(mock_client, "abc-12345")
+        assert result["available"] is False
+        assert result["reason"] == "export_unavailable"
+        assert not any(tmp_path.iterdir())

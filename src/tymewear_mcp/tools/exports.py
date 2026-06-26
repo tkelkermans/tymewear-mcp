@@ -35,6 +35,15 @@ def _save_export(resp: Response, activity_id: str, extension: str) -> dict[str, 
         data = resp.json()
         return cast(dict[str, Any], TymeClient.sanitize(data))
 
+    body_head = resp.content[:64].lstrip().lower()
+    if "text/html" in content_type or body_head.startswith(b"<!doctype") or body_head.startswith(b"<html"):
+        return {
+            "available": False,
+            "reason": "export_unavailable",
+            "status_code": resp.status_code,
+            "detail": "Export endpoint returned an HTML/error page instead of file data.",
+        }
+
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     filename = _safe_export_filename(_extract_filename(resp), f"activity_{activity_id[:8]}.{extension}")
     filepath = EXPORT_DIR / filename
