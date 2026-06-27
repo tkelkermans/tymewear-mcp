@@ -66,7 +66,7 @@ def extract_activity_insights(
             "ve": entry.get("VE"),
             "hr": entry.get("HR"),
             "confidence": entry.get("confidence"),
-            "estimated_power_w": round(power, 1) if isinstance(power, (int, float)) else None,
+            "steady_state_power_w": round(power, 1) if isinstance(power, (int, float)) else None,
         }
 
     quality_raw = zones.get("_quality")
@@ -117,9 +117,9 @@ def extract_activity_insights(
         "ve_curve_available": is_test,
         "truncated_test": truncated,
         "note": (
-            "Power values are Tyme Wear estimates from ventilation. For measured power-at-threshold, "
-            "look up power at each detected_breakpoints time_seconds (start + offset) in the matching "
-            "TrainingPeaks/Garmin ride, or use tw_compute_power_at_threshold."
+            "Power is recorded from the power meter paired in the Tyme Wear app (measured, not estimated). "
+            "detected_breakpoints.displayed_power_w is the threshold power profile; "
+            "thresholds.steady_state_power_w is Tyme Wear's separate steady-state figure for the zone."
         ),
     }
 

@@ -53,7 +53,7 @@ def test_mmss():
 def test_insights_complete_test():
     r = extract_activity_insights(WZD, TEST_ACTIVITY, PROFILE)
     # labeled thresholds from workout-zone-detection
-    assert r["thresholds"]["VT1"] == {"ve": 60.68, "hr": 131.0, "confidence": "high", "estimated_power_w": 132.9}
+    assert r["thresholds"]["VT1"] == {"ve": 60.68, "hr": 131.0, "confidence": "high", "steady_state_power_w": 132.9}
     assert r["thresholds"]["VT2"]["ve"] == 113.32
     # detected breakpoints + displayed power from activity metrics (tests only)
     assert r["detected_breakpoints"]["vt1"]["time_seconds"] == 2247
@@ -85,7 +85,7 @@ def test_regular_ride_no_breakpoints_but_has_thresholds():
     activity = {"id": "r", "sport": "2", "new_zone_vt1": "", "new_zone_vt2": "", "new_zone_vo2max": ""}
     r = extract_activity_insights(wzd, activity, PROFILE)
     assert r["thresholds"]["VT1"]["confidence"] == "medium"
-    assert r["thresholds"]["VT1"]["estimated_power_w"] is None
+    assert r["thresholds"]["VT1"]["steady_state_power_w"] is None
     assert r["detected_breakpoints"] == {}
     assert r["ve_curve_available"] is False
     assert r["truncated_test"] is False

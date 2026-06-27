@@ -222,18 +222,19 @@ def _registered_tools() -> list[Tool]:
         Tool(
             name="tw_get_activity_insights",
             description=(
-                "Compact, labeled per-activity report: VT1/VT2/Endurance VE+HR+confidence and estimated power, "
-                "detected breakpoint times with the displayed power profile (tests), per-zone time/calories, "
-                "quality flags, a truncated-test flag, and the athlete's VE targets. Works for tests and rides."
+                "Compact, labeled per-activity report: VT1/VT2/Endurance VE+HR+confidence, the measured "
+                "power-at-threshold (from the meter paired in the Tyme Wear app), detected breakpoint times, "
+                "per-zone time/calories, quality flags, a truncated-test flag, and the athlete's VE targets. "
+                "Works for tests and rides."
             ),
             inputSchema=GetActivityInput.model_json_schema(),
         ),
         Tool(
             name="tw_compute_power_at_threshold",
             description=(
-                "Join Tyme Wear's detected threshold times to an external power series and return mean watts at "
-                "VT1/VT2/VO2max/FatMax. Supply power_samples=[[t_seconds, watts], ...] from the matching "
-                "TrainingPeaks/Garmin ride — Tyme Wear has no measured power."
+                "Cross-check/backfill: join an external power series to Tyme Wear's detected breakpoint times and "
+                "return mean watts at VT1/VT2/VO2max/FatMax. Tyme Wear already records power from the meter paired "
+                "in its app, so use this only to validate against a separate file or when an activity lacks power."
             ),
             inputSchema=ComputePowerAtThresholdInput.model_json_schema(),
         ),
