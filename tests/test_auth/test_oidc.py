@@ -130,3 +130,29 @@ class TestOIDCTokenVerifier:
             priv, algorithm="RS256",
         )
         assert await verifier.verify_token(tok) is None
+
+    async def test_audience_not_enforced_when_unset(self, keypair):
+        priv, pub = keypair
+        verifier = OIDCTokenVerifier(
+            issuer=ISSUER,
+            audience=None,
+            allowed_emails=ALLOWED,
+            resource_url=AUD,
+            scopes=["openid"],
+            signing_key_resolver=lambda _t: pub,
+        )
+        # token carries an unrelated audience; accepted because audience is not configured
+        result = await verifier.verify_token(_token(priv, aud="https://some-other-resource"))
+        assert result is not None
+
+    async def test_issuer_trailing_slash_tolerated(self, keypair):
+        priv, pub = keypair
+        verifier = OIDCTokenVerifier(
+            issuer=ISSUER + "/",  # configured with a trailing slash; token iss has none
+            audience=AUD,
+            allowed_emails=ALLOWED,
+            resource_url=AUD,
+            scopes=["openid"],
+            signing_key_resolver=lambda _t: pub,
+        )
+        assert await verifier.verify_token(_token(priv)) is not None

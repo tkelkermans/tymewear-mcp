@@ -53,14 +53,14 @@ class TestPublicConfigOAuth:
         assert cfg.oidc_audience == "https://tymewear-mcp.vercel.app/mcp"
         assert cfg.allowed_emails == ["a@example.com", "b@example.com"]
 
-    def test_audience_defaults_to_public_url(self):
+    def test_audience_optional_when_unset(self):
         cfg = PublicServerConfig.from_env(
             _env(
                 TYMEWEAR_PUBLIC_ISSUER_URL="https://auth.example.com",
                 TYMEWEAR_ALLOWED_EMAILS="a@example.com",
             )
         )
-        assert cfg.oidc_audience == "https://tymewear-mcp.vercel.app/mcp"
+        assert cfg.oidc_audience is None
 
     def test_issuer_without_allowlist_rejected(self):
         with pytest.raises(ValueError, match="ALLOWED_EMAILS"):

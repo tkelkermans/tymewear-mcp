@@ -36,7 +36,7 @@ class OIDCTokenVerifier:
         self,
         *,
         issuer: str,
-        audience: str,
+        audience: str | None,
         allowed_emails: Iterable[str],
         resource_url: str,
         scopes: Iterable[str],
@@ -56,7 +56,7 @@ class OIDCTokenVerifier:
         cls,
         *,
         issuer: str,
-        audience: str,
+        audience: str | None,
         allowed_emails: Iterable[str],
         resource_url: str,
         scopes: Iterable[str],
@@ -108,30 +108,37 @@ class OIDCTokenVerifier:
         try:
             info = self._resolve_userinfo(token)
         except Exception:
-            logger.info("OIDC userinfo lookup failed")
+            logger.warning("OIDC userinfo lookup failed")
             return None
         email = info.get("email") if isinstance(info, dict) else None
         return str(email).strip().lower() if email else None
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        require = ["exp", "iss"]
+        options: dict[str, Any] = {"require": require}
+        decode_kwargs: dict[str, Any] = {"algorithms": _ALGORITHMS, "options": options}
+        if self._audience:
+            decode_kwargs["audience"] = self._audience
+            require.append("aud")
+        else:
+            # No audience configured: don't enforce aud even if the token carries one.
+            options["verify_aud"] = False
         try:
             key = self._resolve_key(token)
-            claims = jwt.decode(
-                token,
-                key,
-                algorithms=_ALGORITHMS,
-                audience=self._audience,
-                issuer=self._issuer,
-                options={"require": ["exp", "iss", "aud"]},
-            )
+            claims = jwt.decode(token, key, **decode_kwargs)
         except Exception as exc:
             self._log_decode_failure(token, exc)
+            return None
+        # Issuer compared manually so a trailing-slash difference (a common provider
+        # quirk) doesn't reject an otherwise-valid token.
+        if str(claims.get("iss") or "").rstrip("/") != self._issuer.rstrip("/"):
+            logger.warning("OIDC token rejected: issuer mismatch (token iss=%r)", claims.get("iss"))
             return None
         email = str(claims.get("email") or "").strip().lower()
         if not email:
             email = self._email_from_userinfo(token) or ""
         if not email or email not in self._allowed:
-            logger.info("OIDC token rejected: email not in allowlist")
+            logger.warning("OIDC token rejected: email %r not in allowlist", email or None)
             return None
         return AccessToken(
             token="[redacted]",
@@ -144,11 +151,11 @@ class OIDCTokenVerifier:
     def _log_decode_failure(token: str, exc: Exception) -> None:
         try:
             unverified = jwt.decode(token, options={"verify_signature": False})
-            logger.info(
+            logger.warning(
                 "OIDC token rejected: %s (iss=%r aud=%r)",
                 type(exc).__name__,
                 unverified.get("iss"),
                 unverified.get("aud"),
             )
         except Exception:
-            logger.info("OIDC token rejected: %s", type(exc).__name__)
+            logger.warning("OIDC token rejected: %s", type(exc).__name__)

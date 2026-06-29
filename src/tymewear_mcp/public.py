@@ -195,8 +195,6 @@ class PublicServerConfig:
                 raise ValueError(
                     "TYMEWEAR_ALLOWED_EMAILS must list at least one email when TYMEWEAR_PUBLIC_ISSUER_URL is set"
                 )
-            if self.oidc_audience is None:
-                self.oidc_audience = self.public_url
         self.bearer_tokens = [token.strip() for token in self.bearer_tokens if token.strip()]
         if not self.bearer_tokens:
             raise ValueError(f"{PUBLIC_TOKEN_ENV} must contain at least one bearer token")
@@ -436,7 +434,7 @@ def build_public_app(config: PublicServerConfig, mcp_server: Server[Any, Any] | 
     if config.issuer_url is not None:
         oidc_verifier = OIDCTokenVerifier.from_issuer(
             issuer=config.issuer_url,
-            audience=config.oidc_audience or config.public_url,
+            audience=config.oidc_audience,
             allowed_emails=config.allowed_emails,
             resource_url=config.public_url,
             scopes=config.scopes,
