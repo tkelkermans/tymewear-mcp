@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from mcp.server import Server
@@ -82,14 +83,17 @@ def disable_public_mode() -> None:
 def _get_client() -> TymeClient:
     global _client
     if _public_mode:
-        # Single-tenant: every authorized caller transparently reads the operator's
-        # data via server-side stored credentials (Vercel env TYMEWEAR_EMAIL/PASSWORD).
-        creds = CredentialStorage().load()
-        if creds is None:
+        # Single-tenant: every authorized caller reads the operator's data via
+        # server-side credentials. Read os.environ directly — CredentialStorage's
+        # keyring/encrypted-file backends write under $HOME, which is read-only on
+        # serverless (Vercel) and raises Errno 30 on every call.
+        email = os.environ.get("TYMEWEAR_EMAIL")
+        password = os.environ.get("TYMEWEAR_PASSWORD")
+        if not (email and password):
             raise PublicCredentialError(
                 "Public mode requires server-side Tyme Wear credentials (set TYMEWEAR_EMAIL/TYMEWEAR_PASSWORD)."
             )
-        return TymeClient(credentials=creds)
+        return TymeClient(credentials={"email": email, "password": password})
 
     if _client is not None:
         return _client

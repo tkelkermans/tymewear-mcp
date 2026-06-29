@@ -635,11 +635,8 @@ async def test_public_mode_disables_mutation_tools_by_default(public_mode, monke
 
 
 async def test_public_mode_returns_structured_validation_errors(public_mode, monkeypatch):
-    class _Storage:
-        def load(self):
-            return {"email": "athlete@example.com", "password": "secret"}
-
-    monkeypatch.setattr(server_mod, "CredentialStorage", _Storage)
+    monkeypatch.setenv("TYMEWEAR_EMAIL", "athlete@example.com")
+    monkeypatch.setenv("TYMEWEAR_PASSWORD", "secret")
 
     result = await server_mod.call_tool("tw_get_activity", {})
 

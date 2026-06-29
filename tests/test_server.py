@@ -273,17 +273,21 @@ async def test_compute_power_at_threshold_route(monkeypatch):
     assert data["power_at_threshold"]["vt1"]["at_seconds"] == 60
 
 
-def test_public_get_client_uses_stored_credentials(monkeypatch):
+def test_public_get_client_uses_env_credentials(monkeypatch):
     from tymewear_mcp.client.http import TymeClient
 
     monkeypatch.setattr(server_mod, "_public_mode", True)
     monkeypatch.setattr(server_mod, "_client", None)
+    monkeypatch.setenv("TYMEWEAR_EMAIL", "athlete@example.com")
+    monkeypatch.setenv("TYMEWEAR_PASSWORD", "secret")
 
-    class _Storage:
-        def load(self):
-            return {"email": "athlete@example.com", "password": "secret"}
+    # Public mode must NOT touch keyring/encrypted storage — those write under $HOME,
+    # which is read-only on serverless (Vercel) and raises Errno 30 on every call.
+    class _Exploding:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("public mode must not construct CredentialStorage")
 
-    monkeypatch.setattr(server_mod, "CredentialStorage", _Storage)
+    monkeypatch.setattr(server_mod, "CredentialStorage", _Exploding)
 
     client = server_mod._get_client()
     assert isinstance(client, TymeClient)
@@ -292,12 +296,8 @@ def test_public_get_client_uses_stored_credentials(monkeypatch):
 def test_public_get_client_without_credentials_raises(monkeypatch):
     monkeypatch.setattr(server_mod, "_public_mode", True)
     monkeypatch.setattr(server_mod, "_client", None)
-
-    class _Storage:
-        def load(self):
-            return None
-
-    monkeypatch.setattr(server_mod, "CredentialStorage", _Storage)
+    monkeypatch.delenv("TYMEWEAR_EMAIL", raising=False)
+    monkeypatch.delenv("TYMEWEAR_PASSWORD", raising=False)
 
     with pytest.raises(server_mod.PublicCredentialError, match="TYMEWEAR_EMAIL"):
         server_mod._get_client()
