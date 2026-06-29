@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from tymewear_mcp.auth.storage import CredentialStorage
 from tymewear_mcp.client.http import TymeClient
-from tymewear_mcp.public import PublicCredentialError, extract_upstream_token
+from tymewear_mcp.public import PublicCredentialError
 from tymewear_mcp.tools import account as account_mod
 from tymewear_mcp.tools import activities as activities_mod
 from tymewear_mcp.tools import activity_files as activity_files_mod
@@ -82,13 +82,14 @@ def disable_public_mode() -> None:
 def _get_client() -> TymeClient:
     global _client
     if _public_mode:
-        try:
-            request = server.request_context.request
-        except LookupError as exc:
+        # Single-tenant: every authorized caller transparently reads the operator's
+        # data via server-side stored credentials (Vercel env TYMEWEAR_EMAIL/PASSWORD).
+        creds = CredentialStorage().load()
+        if creds is None:
             raise PublicCredentialError(
-                "Public mode requires request-scoped Tyme Wear credentials and cannot use local credential storage."
-            ) from exc
-        return TymeClient(access_token=extract_upstream_token(request))
+                "Public mode requires server-side Tyme Wear credentials (set TYMEWEAR_EMAIL/TYMEWEAR_PASSWORD)."
+            )
+        return TymeClient(credentials=creds)
 
     if _client is not None:
         return _client

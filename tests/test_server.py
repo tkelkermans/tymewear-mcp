@@ -271,3 +271,33 @@ async def test_compute_power_at_threshold_route(monkeypatch):
     data = json.loads(result[0].text)
     assert data["power_at_threshold"]["vt1"]["power_watts"] == 200.0
     assert data["power_at_threshold"]["vt1"]["at_seconds"] == 60
+
+
+def test_public_get_client_uses_stored_credentials(monkeypatch):
+    from tymewear_mcp.client.http import TymeClient
+
+    monkeypatch.setattr(server_mod, "_public_mode", True)
+    monkeypatch.setattr(server_mod, "_client", None)
+
+    class _Storage:
+        def load(self):
+            return {"email": "athlete@example.com", "password": "secret"}
+
+    monkeypatch.setattr(server_mod, "CredentialStorage", _Storage)
+
+    client = server_mod._get_client()
+    assert isinstance(client, TymeClient)
+
+
+def test_public_get_client_without_credentials_raises(monkeypatch):
+    monkeypatch.setattr(server_mod, "_public_mode", True)
+    monkeypatch.setattr(server_mod, "_client", None)
+
+    class _Storage:
+        def load(self):
+            return None
+
+    monkeypatch.setattr(server_mod, "CredentialStorage", _Storage)
+
+    with pytest.raises(server_mod.PublicCredentialError, match="TYMEWEAR_EMAIL"):
+        server_mod._get_client()

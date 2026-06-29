@@ -133,6 +133,24 @@ To enable it, add one repository secret under **Settings → Secrets and variabl
 
 The org/project IDs are baked into the workflow (they are not secret and grant nothing without the token). The runtime `TYMEWEAR_PUBLIC_BEARER_TOKENS` env var persists in the Vercel project across deploys; rotate it with `scripts/deploy_public_vercel.sh`, not CI.
 
+### claude.ai connector (OAuth)
+
+The static bearer token works for header-capable clients (Claude Code: `claude mcp add --transport http <url> --header "Authorization: Bearer <token>"`). claude.ai's connector instead authenticates via OAuth, so to add the MCP there the server runs as an OAuth *protected resource*: it validates JWT access tokens from a managed provider (e.g. WorkOS AuthKit or Stytch) and enforces an email allowlist. It stays single-tenant — every authorized user reads the operator's data via server-side credentials.
+
+Set these (sensitive) Vercel env vars to enable it:
+
+| Var | Purpose |
+|-----|---------|
+| `TYMEWEAR_PUBLIC_ISSUER_URL` | Provider issuer URL (enables OAuth protected-resource mode) |
+| `TYMEWEAR_OIDC_AUDIENCE` | Expected token `aud` (defaults to `TYMEWEAR_PUBLIC_URL`) |
+| `TYMEWEAR_OIDC_JWKS_URL` | Optional explicit JWKS URL (else discovered from the issuer) |
+| `TYMEWEAR_ALLOWED_EMAILS` | Comma-separated allowlist of emails permitted to connect |
+| `TYMEWEAR_EMAIL` / `TYMEWEAR_PASSWORD` | The operator's Tyme Wear credentials used for all upstream calls |
+
+Provider setup (WorkOS AuthKit example): create an app, enable Google/email login, enable Dynamic Client Registration so claude.ai can self-register, and copy the issuer URL into `TYMEWEAR_PUBLIC_ISSUER_URL`. Then add the connector in claude.ai → it discovers the provider via the server's `/.well-known/oauth-protected-resource`, registers, and runs the hosted login; only allow-listed emails are admitted.
+
+The static `TYMEWEAR_PUBLIC_BEARER_TOKENS` path keeps working alongside OAuth (dual-mode). Without `TYMEWEAR_PUBLIC_ISSUER_URL`, OAuth is off and only the bearer path is active.
+
 ### Post-Deploy Verification
 
 After deployment, verify the public endpoint without printing secrets:

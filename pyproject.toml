@@ -15,6 +15,7 @@ dependencies = [
     "cryptography>=42.0.0",
     "starlette>=0.37.0",
     "uvicorn>=0.30.0",
+    "pyjwt[crypto]>=2.8.0",
 ]
 
 [project.optional-dependencies]

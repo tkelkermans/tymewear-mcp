@@ -11,8 +11,7 @@ from mcp.shared.context import RequestContext
 from starlette.requests import Request
 
 from tymewear_mcp import server as server_mod
-from tymewear_mcp.client.http import TymeClient
-from tymewear_mcp.public import PublicCredentialError, PublicServerConfig, StaticBearerTokenVerifier, build_public_app
+from tymewear_mcp.public import PublicServerConfig, StaticBearerTokenVerifier, build_public_app
 
 TEST_BEARER_TOKEN = "test-public-bearer-token-32-chars"
 TEST_AUTHORIZATION = f"Bearer {TEST_BEARER_TOKEN}"
@@ -542,6 +541,7 @@ async def test_public_app_advertises_resource_metadata_when_issuer_is_configured
         PublicServerConfig(
             public_url="https://mcp.example.com/mcp",
             issuer_url="https://auth.example.com",
+            allowed_emails=["coach@example.com"],
             bearer_tokens=[TEST_BEARER_TOKEN],
             allowed_hosts=["mcp.example.com"],
             allowed_origins=["https://mcp.example.com"],
@@ -585,67 +585,6 @@ async def test_public_mode_list_tools_can_expose_mutations_when_explicitly_enabl
     assert "tw_update_profile" in names
     assert "tw_delete_activity" in names
     assert "tw_export_csv" not in names
-
-
-async def test_public_mode_get_client_uses_request_token_without_storage(public_mode, monkeypatch):
-    storage = AsyncMock(side_effect=AssertionError("public mode must not load local credentials"))
-    monkeypatch.setattr(server_mod, "CredentialStorage", storage)
-    token = _set_request_context(_request({"X-Tymewear-Token": "upstream-token"}))
-
-    try:
-        client = server_mod._get_client()
-        assert isinstance(client, TymeClient)
-        assert await client._ensure_token() == "upstream-token"
-        storage.assert_not_called()
-    finally:
-        await client.close()
-        request_ctx.reset(token)
-
-
-def test_public_mode_requires_request_upstream_token(public_mode, monkeypatch):
-    storage = AsyncMock(side_effect=AssertionError("public mode must not load local credentials"))
-    monkeypatch.setattr(server_mod, "CredentialStorage", storage)
-    token = _set_request_context(_request())
-
-    try:
-        with pytest.raises(PublicCredentialError, match="X-Tymewear-Token"):
-            server_mod._get_client()
-        storage.assert_not_called()
-    finally:
-        request_ctx.reset(token)
-
-
-@pytest.mark.parametrize(
-    "headers",
-    [
-        {"X-Tymewear-Token": "leaky-upstream-token-value\r\nnext-header"},
-        {"X-Tymewear-Token": f"leaky-upstream-token-value{'x' * 4096}"},
-        {"X-Tymewear-Authorization": "Token leaky-upstream-token-value\r\nnext-header"},
-        {"X-Tymewear-Authorization": f"Token leaky-upstream-token-value{'x' * 4096}"},
-    ],
-)
-async def test_public_mode_invalid_upstream_token_errors_do_not_echo_token(
-    public_mode,
-    monkeypatch,
-    headers: dict[str, str],
-):
-    storage = AsyncMock(side_effect=AssertionError("public mode must not load local credentials"))
-    monkeypatch.setattr(server_mod, "CredentialStorage", storage)
-    token = _set_request_context(_request(headers))
-
-    try:
-        result = await server_mod.call_tool("tw_get_profile", {})
-    finally:
-        request_ctx.reset(token)
-
-    payload = json.loads(result[0].text)
-    assert payload == {
-        "isError": True,
-        "error_code": "TYMEWEAR_UPSTREAM_TOKEN_REQUIRED",
-        "message": "Public mode received an invalid Tyme Wear upstream token.",
-    }
-    assert "leaky-upstream-token-value" not in result[0].text
-    storage.assert_not_called()
 
 
 async def test_public_mode_disables_disk_export_tools(public_mode, monkeypatch):
@@ -696,14 +635,13 @@ async def test_public_mode_disables_mutation_tools_by_default(public_mode, monke
 
 
 async def test_public_mode_returns_structured_validation_errors(public_mode, monkeypatch):
-    storage = AsyncMock(side_effect=AssertionError("public mode must not load local credentials"))
-    monkeypatch.setattr(server_mod, "CredentialStorage", storage)
-    token = _set_request_context(_request({"X-Tymewear-Token": "upstream-token"}))
+    class _Storage:
+        def load(self):
+            return {"email": "athlete@example.com", "password": "secret"}
 
-    try:
-        result = await server_mod.call_tool("tw_get_activity", {})
-    finally:
-        request_ctx.reset(token)
+    monkeypatch.setattr(server_mod, "CredentialStorage", _Storage)
+
+    result = await server_mod.call_tool("tw_get_activity", {})
 
     payload = json.loads(result[0].text)
     assert payload == {
@@ -712,7 +650,6 @@ async def test_public_mode_returns_structured_validation_errors(public_mode, mon
         "message": "Invalid tool arguments.",
     }
     assert "activity_id" not in result[0].text
-    storage.assert_not_called()
 
 
 async def test_public_mode_returns_unknown_tool_without_upstream_token(public_mode, monkeypatch):

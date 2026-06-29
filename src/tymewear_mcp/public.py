@@ -6,7 +6,7 @@ import hmac
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
@@ -26,6 +26,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import Message, Receive, Scope, Send
+
+from tymewear_mcp.auth.oidc import OIDCTokenVerifier
 
 DEFAULT_PUBLIC_MCP_PATH = "/mcp"
 DEFAULT_PUBLIC_SCOPE = "tymewear:mcp"
@@ -176,6 +178,9 @@ class PublicServerConfig:
     scopes: list[str] = field(default_factory=lambda: [DEFAULT_PUBLIC_SCOPE])
     json_response: bool = False
     issuer_url: str | None = None
+    oidc_audience: str | None = None
+    oidc_jwks_uri: str | None = None
+    allowed_emails: list[str] = field(default_factory=list)
     allow_mutations: bool = False
     max_body_bytes: int = DEFAULT_PUBLIC_MAX_BODY_BYTES
 
@@ -185,6 +190,13 @@ class PublicServerConfig:
         _validate_public_url_path(self.public_url, self.mcp_path)
         if self.issuer_url is not None:
             _validate_public_url(self.issuer_url, name="TYMEWEAR_PUBLIC_ISSUER_URL")
+            self.allowed_emails = [email.strip() for email in self.allowed_emails if email.strip()]
+            if not self.allowed_emails:
+                raise ValueError(
+                    "TYMEWEAR_ALLOWED_EMAILS must list at least one email when TYMEWEAR_PUBLIC_ISSUER_URL is set"
+                )
+            if self.oidc_audience is None:
+                self.oidc_audience = self.public_url
         self.bearer_tokens = [token.strip() for token in self.bearer_tokens if token.strip()]
         if not self.bearer_tokens:
             raise ValueError(f"{PUBLIC_TOKEN_ENV} must contain at least one bearer token")
@@ -226,6 +238,9 @@ class PublicServerConfig:
             allowed_hosts=allowed_hosts or _split_tokens(env.get("TYMEWEAR_PUBLIC_ALLOWED_HOSTS")),
             allowed_origins=allowed_origins or _split_tokens(env.get("TYMEWEAR_PUBLIC_ALLOWED_ORIGINS")),
             issuer_url=issuer_url or env.get("TYMEWEAR_PUBLIC_ISSUER_URL"),
+            oidc_audience=env.get("TYMEWEAR_OIDC_AUDIENCE"),
+            oidc_jwks_uri=env.get("TYMEWEAR_OIDC_JWKS_URL"),
+            allowed_emails=_split_tokens(env.get("TYMEWEAR_ALLOWED_EMAILS")),
             mcp_path=mcp_path,
             json_response=json_response,
             allow_mutations=_env_flag(env.get(PUBLIC_ALLOW_MUTATIONS_ENV))
@@ -261,6 +276,26 @@ class StaticBearerTokenVerifier:
                 scopes=self._scopes,
                 resource=self._resource_url,
             )
+        return None
+
+
+class _BearerVerifier(Protocol):
+    async def verify_token(self, token: str) -> AccessToken | None: ...
+
+
+class CompositeBearerVerifier:
+    """Accept a static gateway bearer (header clients) or a provider OIDC JWT (claude.ai)."""
+
+    def __init__(self, static_verifier: _BearerVerifier, oidc_verifier: _BearerVerifier | None = None) -> None:
+        self._static = static_verifier
+        self._oidc = oidc_verifier
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        result = await self._static.verify_token(token)
+        if result is not None:
+            return result
+        if self._oidc is not None:
+            return await self._oidc.verify_token(token)
         return None
 
 
@@ -382,11 +417,22 @@ def build_public_app(config: PublicServerConfig, mcp_server: Server[Any, Any] | 
         ),
     )
     mcp_app = _StreamableHTTPASGIApp(session_manager)
-    verifier = StaticBearerTokenVerifier(
+    static_verifier = StaticBearerTokenVerifier(
         bearer_tokens=config.bearer_tokens,
         resource_url=config.public_url,
         scopes=config.scopes,
     )
+    oidc_verifier = None
+    if config.issuer_url is not None:
+        oidc_verifier = OIDCTokenVerifier.from_issuer(
+            issuer=config.issuer_url,
+            audience=config.oidc_audience or config.public_url,
+            allowed_emails=config.allowed_emails,
+            resource_url=config.public_url,
+            scopes=config.scopes,
+            jwks_uri=config.oidc_jwks_uri,
+        )
+    verifier = CompositeBearerVerifier(static_verifier, oidc_verifier)
 
     resource_metadata_url = None
     routes = [
