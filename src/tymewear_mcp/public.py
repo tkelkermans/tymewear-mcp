@@ -232,12 +232,22 @@ class PublicServerConfig:
         resolved_public_url = public_url or _public_url_from_env(env, mcp_path)
         if resolved_public_url is None:
             raise ValueError("TYMEWEAR_PUBLIC_URL must be set for public mode outside Vercel")
+        resolved_issuer = issuer_url or env.get("TYMEWEAR_PUBLIC_ISSUER_URL")
+        scopes_env = env.get("TYMEWEAR_OIDC_SCOPES")
+        if scopes_env:
+            scopes = scopes_env.replace(",", " ").split()
+        elif resolved_issuer:
+            # claude.ai requests these from the provider; custom scopes get invalid_scope.
+            scopes = ["openid", "profile", "email"]
+        else:
+            scopes = [DEFAULT_PUBLIC_SCOPE]
         return cls(
             public_url=resolved_public_url,
             bearer_tokens=tokens,
             allowed_hosts=allowed_hosts or _split_tokens(env.get("TYMEWEAR_PUBLIC_ALLOWED_HOSTS")),
             allowed_origins=allowed_origins or _split_tokens(env.get("TYMEWEAR_PUBLIC_ALLOWED_ORIGINS")),
-            issuer_url=issuer_url or env.get("TYMEWEAR_PUBLIC_ISSUER_URL"),
+            issuer_url=resolved_issuer,
+            scopes=scopes,
             oidc_audience=env.get("TYMEWEAR_OIDC_AUDIENCE"),
             oidc_jwks_uri=env.get("TYMEWEAR_OIDC_JWKS_URL"),
             allowed_emails=_split_tokens(env.get("TYMEWEAR_ALLOWED_EMAILS")),

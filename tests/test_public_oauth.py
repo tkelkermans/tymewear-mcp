@@ -70,3 +70,24 @@ class TestPublicConfigOAuth:
         cfg = PublicServerConfig.from_env(_env())
         assert cfg.issuer_url is None
         assert cfg.allowed_emails == []
+
+
+class TestPublicConfigScopes:
+    def test_oidc_default_scopes_when_issuer_set(self):
+        cfg = PublicServerConfig.from_env(
+            _env(TYMEWEAR_PUBLIC_ISSUER_URL="https://auth.example.com", TYMEWEAR_ALLOWED_EMAILS="a@example.com")
+        )
+        assert cfg.scopes == ["openid", "profile", "email"]
+
+    def test_default_scope_without_issuer(self):
+        assert PublicServerConfig.from_env(_env()).scopes == ["tymewear:mcp"]
+
+    def test_scopes_override(self):
+        cfg = PublicServerConfig.from_env(
+            _env(
+                TYMEWEAR_PUBLIC_ISSUER_URL="https://auth.example.com",
+                TYMEWEAR_ALLOWED_EMAILS="a@example.com",
+                TYMEWEAR_OIDC_SCOPES="openid email",
+            )
+        )
+        assert cfg.scopes == ["openid", "email"]

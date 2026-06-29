@@ -92,3 +92,41 @@ class TestOIDCTokenVerifier:
     async def test_garbage_rejected(self, keypair):
         _priv, pub = keypair
         assert await _verifier(pub).verify_token("not-a-jwt") is None
+
+    async def test_email_resolved_from_userinfo_when_absent_in_token(self, keypair):
+        priv, pub = keypair
+        verifier = OIDCTokenVerifier(
+            issuer=ISSUER,
+            audience=AUD,
+            allowed_emails=ALLOWED,
+            resource_url=AUD,
+            scopes=["openid", "email"],
+            signing_key_resolver=lambda _t: pub,
+            userinfo_resolver=lambda _t: {"email": "coach@example.com"},
+        )
+        tok = jwt.encode(
+            {"iss": ISSUER, "aud": AUD, "sub": "u9",
+             "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)},
+            priv, algorithm="RS256",
+        )
+        result = await verifier.verify_token(tok)
+        assert result is not None
+        assert result.client_id == "u9"
+
+    async def test_userinfo_email_still_subject_to_allowlist(self, keypair):
+        priv, pub = keypair
+        verifier = OIDCTokenVerifier(
+            issuer=ISSUER,
+            audience=AUD,
+            allowed_emails=ALLOWED,
+            resource_url=AUD,
+            scopes=["openid", "email"],
+            signing_key_resolver=lambda _t: pub,
+            userinfo_resolver=lambda _t: {"email": "stranger@example.com"},
+        )
+        tok = jwt.encode(
+            {"iss": ISSUER, "aud": AUD, "sub": "u9",
+             "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)},
+            priv, algorithm="RS256",
+        )
+        assert await verifier.verify_token(tok) is None
