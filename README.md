@@ -10,11 +10,13 @@ Tyme Wear makes the VitalPro chest strap, a wearable breathing sensor that measu
 
 ## Features
 
-- **37 MCP tools** for profile, activities, breathing data, VE thresholds, activity files/logs/detection, training plans, workout recommendations, integrations, subscription/account, resting/max physiology, and exports
+- **39 MCP tools** for profile, activities, breathing data, VE thresholds, per-activity insights, activity files/logs/detection, training plans, workout recommendations, integrations, subscription/account, resting/max physiology, and exports
 - **Secure credential storage** via system keyring (macOS Keychain / Windows Credential Manager) with AES-256-GCM encrypted file fallback
 - **Auto-authentication** with token caching and automatic re-auth on expiry
 - **Smart breathing data** with summary, window, and full modes to avoid context overflow
-- **Public Streamable HTTP mode** for authenticated Internet deployments without storing end-customer credentials or export files
+- **Per-activity insights** (`tw_get_activity_insights`): detected VT1/VT2/VO2max with measured power-at-threshold, confidence scores, a truncated-test flag, and per-zone time/calories — in one call, no FIT parsing
+- **Slim activity payloads**: `tw_get_activity` and `tw_get_activity_workout_zone_detection` drop multi-MB per-second arrays by default (opt back in with `include=[...]`)
+- **Public Streamable HTTP mode** with static-bearer or OAuth auth (one-click claude.ai connector), single-tenant to the operator's Tyme Wear account
 
 ## Quick Start
 
@@ -142,8 +144,9 @@ Set these (sensitive) Vercel env vars to enable it:
 | Var | Purpose |
 |-----|---------|
 | `TYMEWEAR_PUBLIC_ISSUER_URL` | Provider issuer URL (enables OAuth protected-resource mode) |
-| `TYMEWEAR_OIDC_AUDIENCE` | Expected token `aud` (defaults to `TYMEWEAR_PUBLIC_URL`) |
+| `TYMEWEAR_OIDC_AUDIENCE` | Optional expected token `aud`; if unset, `aud` is not enforced (issuer signature + email allowlist still apply) |
 | `TYMEWEAR_OIDC_JWKS_URL` | Optional explicit JWKS URL (else discovered from the issuer) |
+| `TYMEWEAR_OIDC_SCOPES` | Optional scopes to advertise to the client (default `openid profile email`) |
 | `TYMEWEAR_ALLOWED_EMAILS` | Comma-separated allowlist of emails permitted to connect |
 | `TYMEWEAR_EMAIL` / `TYMEWEAR_PASSWORD` | The operator's Tyme Wear credentials used for all upstream calls |
 
@@ -163,34 +166,26 @@ python scripts/verify_public_endpoint.py --bearer-token-file "$TOKEN_FILE"
 The verifier checks `/healthz`, unauthenticated `/mcp` rejection, authenticated MCP `initialize`, authenticated `tools/list`, and public security/no-cache headers.
 It also confirms default public deployments do not advertise disk export or mutation tools.
 
-### Public Client Headers
+### Public Client Authentication
 
-Every MCP request must include server authentication:
+Public mode is **single-tenant**: it authenticates upstream to Tyme Wear with the operator's own credentials from `TYMEWEAR_EMAIL` / `TYMEWEAR_PASSWORD` (server-side env), so every authorized caller reads the operator's data. Clients only need to prove they are allowed to connect — there is no per-request Tyme Wear token.
+
+Header-capable clients (e.g. Claude Code) send the static gateway bearer token:
 
 ```http
 Authorization: Bearer <TYMEWEAR_PUBLIC_BEARER_TOKENS entry>
 ```
 
-Every tool request that reads Tyme Wear data must also include a request-scoped Tyme Wear upstream token:
+When OAuth is enabled (`TYMEWEAR_PUBLIC_ISSUER_URL` set), clients such as the claude.ai connector instead send a provider-issued JWT obtained through the hosted login; the server validates it (signature via JWKS, issuer, optional audience) and admits only allow-listed emails. Both paths work at once (dual-mode).
 
-```http
-X-Tymewear-Token: <Tyme Wear API session token>
-```
+> Earlier revisions required a per-request `X-Tymewear-Token`. Single-tenant mode removed it — credentials are now server-side.
 
-or:
-
-```http
-X-Tymewear-Authorization: Token <Tyme Wear API session token>
-```
-
-The Tyme Wear token is kept only in memory for that request. Public mode never reads from or writes to the local keyring, encrypted credential file, or `TYMEWEAR_EMAIL` / `TYMEWEAR_PASSWORD`.
-
-### Public No-Storage Policy
+### Public Data Policy
 
 In public mode:
 
-- End-customer email/password credentials are not accepted or stored.
-- Tyme Wear upstream tokens are not persisted.
+- Access is gated by the static bearer token and/or the OAuth email allowlist; only allow-listed identities connect.
+- The operator's Tyme Wear credentials live only in server-side env (keep them in a secret manager). They are read straight from the environment — public mode does **not** touch the local keyring or encrypted credential file (those write under `$HOME`, which is read-only on serverless).
 - Activity/profile/training data is relayed in MCP responses and sanitized for secret-like fields.
 - Public responses include `Cache-Control: no-store`, `Pragma: no-cache`, `X-Robots-Tag: noindex, nofollow`, HSTS for HTTPS public URLs, and baseline security headers to reduce accidental intermediary caching, indexing, and browser-side leakage of customer data.
 - Profile/activity mutation tools are hidden and return `PUBLIC_MUTATIONS_DISABLED` by default. Only enable them with `--allow-mutations` or `TYMEWEAR_PUBLIC_ALLOW_MUTATIONS=true` for trusted deployments.
@@ -224,7 +219,8 @@ In public mode:
 | Tool | Description |
 |------|-------------|
 | `tw_get_activities` | List activities with cursor pagination and website filters for sports, activity types, search, user ID, and pro team |
-| `tw_get_activity` | Full activity detail: duration, thresholds, zones, TSS, firmware, third-party links |
+| `tw_get_activity` | Full activity detail: duration, thresholds, zones, TSS, firmware, third-party links. Heavy per-second arrays are summarised under `_omitted_fields` by default; pass `include=[...]` to fetch specific ones |
+| `tw_get_activity_insights` | Compact per-activity report: VT1/VT2/Endurance VE+HR+confidence, **measured power-at-threshold**, detected breakpoint times, per-zone time/calories, quality flags, a truncated-test flag, and VE targets — works for tests and rides |
 | `tw_get_activity_status` | Algorithm processing status for an activity |
 | `tw_pin_activity` | Pin/unpin an activity for threshold detection |
 | `tw_get_pinned_activity` | Get currently pinned activity |
@@ -244,7 +240,7 @@ In public mode:
 | `tw_get_activity_logs` | Get read-only activity logs/events |
 | `tw_get_activity_strap_files` | Get strap-file metadata when available |
 | `tw_export_activity_strap_files` | Export raw strap files when available |
-| `tw_get_activity_workout_zone_detection` | Get workout-zone detection results |
+| `tw_get_activity_workout_zone_detection` | Workout-zone detection (per-zone time/calories, VT1/VT2 VE+HR+confidence, estimated power). Per-second point clouds are summarised under `_omitted_fields`; pass `include=[...]` for them |
 
 ### Training Plans & Workouts
 
@@ -274,6 +270,7 @@ In public mode:
 | Tool | Description |
 |------|-------------|
 | `tw_get_ve_targets` | Current VE targets (VT1, BP, VT2, VO2max) per sport |
+| `tw_compute_power_at_threshold` | Join an external power series (`[[t_seconds, watts], ...]`) to detected breakpoint times → mean watts at VT1/VT2/VO2max/FatMax. A cross-check/backfill for the power Tyme Wear already records |
 | `tw_get_zone_distribution` | Zone time distribution across activities |
 | `tw_tag_threshold` | Tag a ventilatory threshold (vt1, vt2, bp, vo2max) from a specific activity |
 | `tw_tag_new_zone` | Tag a new-model zone value (fatmax, vt1, vt2, vo2max) from a specific activity |
@@ -300,6 +297,7 @@ Once configured, you can ask Claude things like:
 - *"Show me my last 10 bike activities"*
 - *"Analyze the breathing data from my ride yesterday — what were my average VE and time in each zone?"*
 - *"What are my current VT1 and VT2 thresholds for cycling?"*
+- *"Pull the insights for my last threshold test — what's my power at VT2 and did it reach VO2max?"*
 - *"Export my last activity as a FIT file"*
 - *"Compare my VE targets between running and cycling"*
 - *"Show my current training plan and workout recommendation"*
@@ -312,7 +310,7 @@ Once configured, you can ask Claude things like:
 - Tokens and credentials are **never** returned in MCP tool results (sanitized before reaching Claude)
 - Environment variable auth available for CI/containers: `TYMEWEAR_EMAIL` + `TYMEWEAR_PASSWORD`
 - File permissions set to 600 (owner read/write only) on encrypted credential files
-- Public mode requires MCP bearer authentication and request-scoped Tyme Wear upstream tokens, bypasses local credential storage, and disables disk-writing export tools
+- Public mode requires bearer or OAuth authentication and is single-tenant: upstream Tyme Wear auth uses server-side `TYMEWEAR_EMAIL`/`TYMEWEAR_PASSWORD` env (never the local keyring or encrypted file, which are read-only on serverless), and disk-writing export tools are disabled
 
 ## Architecture
 
@@ -320,15 +318,15 @@ Once configured, you can ask Claude things like:
 tymewear-mcp/
 ├── src/tymewear_mcp/
 │   ├── cli.py              # CLI entry point
-│   ├── server.py           # MCP server + 37 tool registrations
-│   ├── public.py           # Public Streamable HTTP server/auth helpers
-│   ├── auth/               # Credential storage (keyring → encrypted → env)
+│   ├── server.py           # MCP server + 39 tool registrations
+│   ├── public.py           # Public Streamable HTTP server + bearer/OAuth auth
+│   ├── auth/               # Credential storage (keyring → encrypted → env) + OIDC verifier (oidc.py)
 │   ├── client/             # Async HTTP client + Pydantic models
-│   └── tools/              # Tool implementations
-└── tests/                  # 126 tests
+│   └── tools/              # Tool implementations (incl. threshold_analysis.py, _slimming.py)
+└── tests/                  # 340 tests
 ```
 
-**Tech stack:** Python 3.10+, [MCP SDK](https://github.com/modelcontextprotocol/python-sdk), httpx, Pydantic, keyring, cryptography
+**Tech stack:** Python 3.10+, [MCP SDK](https://github.com/modelcontextprotocol/python-sdk), httpx, Pydantic, keyring, cryptography, PyJWT
 
 ## Development
 
