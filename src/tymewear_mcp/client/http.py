@@ -6,6 +6,8 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -172,6 +174,37 @@ class TymeClient:
 
     async def get_raw(self, path: str, **kwargs: Any) -> Response:
         return await self._request_raw("get", path, **kwargs)
+
+    @asynccontextmanager
+    async def stream_raw(self, method: str, path: str, **kwargs: Any) -> AsyncIterator[Response]:
+        """Stream an authenticated raw response without buffering its body."""
+        await self._rate_limit()
+        await self._ensure_token()
+        headers = self._auth_headers()
+        kwargs.setdefault("headers", {}).update(headers)
+
+        request = self._http.build_request(method, path, **kwargs)
+        resp = await self._http.send(request, stream=True)
+        if resp.status_code == 401:
+            await resp.aclose()
+            async with self._auth_lock:
+                refreshed = await self._refresh()
+                if not refreshed:
+                    self._token = None
+                    if self._credentials is None:
+                        resp.raise_for_status()
+                    await self._signin()
+            kwargs["headers"].update(self._auth_headers())
+            await self._rate_limit()
+            request = self._http.build_request(method, path, **kwargs)
+            resp = await self._http.send(request, stream=True)
+
+        try:
+            if resp.status_code >= 400:
+                resp.raise_for_status()
+            yield resp
+        finally:
+            await resp.aclose()
 
     async def patch(self, path: str, **kwargs: Any) -> Any:
         return await self._request("patch", path, **kwargs)
