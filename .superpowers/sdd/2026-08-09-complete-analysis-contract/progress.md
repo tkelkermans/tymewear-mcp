@@ -33,4 +33,16 @@
   their focused RED was 4 failed and final re-review reported no unresolved
   Critical or Important findings. Final focused tests are 62 passed, scoped
   Ruff/mypy are clean, and the fresh full suite is 456 passed. Server/public
-  registration remains untouched for Task 5. Awaiting parent re-review.
+  registration remains untouched for Task 5.
+- Task 4 final rereview at `7fe447f`: approved. Complete with commits `c132a7d`
+  and `7fe447f`; capability, unit, strict-JSON, coverage, zone, integration,
+  privacy and read-only acceptance checks passed.
+- Task 5 implementation complete from approved `7fe447f`: centralized total
+  public privacy projection, strict published analysis schema, exact MCP
+  registration/dispatch, public-only raw/file suppression, stable exception
+  containment, verifier and README contracts. Initial aggregate RED was 46
+  failed and 169 passed. Review-driven RED groups were 2, 5 and 5 failures;
+  final focused tests are 223 passed, scoped Ruff/mypy are clean, and the fresh
+  full suite is 508 passed. Independent re-review returned Ready with no
+  Critical or Important findings. No deploy or push was performed. Awaiting
+  parent review.

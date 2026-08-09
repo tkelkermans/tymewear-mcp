@@ -10,6 +10,7 @@ from mcp.server.lowlevel.server import request_ctx
 from mcp.shared.context import RequestContext
 from starlette.requests import Request
 
+from tymewear_mcp import public as public_mod
 from tymewear_mcp import server as server_mod
 from tymewear_mcp.public import PublicServerConfig, StaticBearerTokenVerifier, build_public_app
 
@@ -573,6 +574,12 @@ async def test_public_mode_list_tools_hides_exports_and_mutations_by_default(pub
     assert "tw_update_profile" not in names
     assert "tw_delete_activity" not in names
     assert "tw_export_csv" not in names
+    assert "tw_get_processed_data" not in names
+    assert "tw_get_new_processed_data" not in names
+    assert "tw_get_activity_logs" not in names
+    assert "tw_get_activity_strap_files" not in names
+    assert "tw_get_activity_analysis" in names
+    assert "tw_get_activity_workout_zone_detection" in names
 
 
 async def test_public_mode_list_tools_can_expose_mutations_when_explicitly_enabled(monkeypatch):
@@ -585,6 +592,12 @@ async def test_public_mode_list_tools_can_expose_mutations_when_explicitly_enabl
     assert "tw_update_profile" in names
     assert "tw_delete_activity" in names
     assert "tw_export_csv" not in names
+    assert "tw_get_processed_data" not in names
+    assert "tw_get_new_processed_data" not in names
+    assert "tw_get_activity_logs" not in names
+    assert "tw_get_activity_strap_files" not in names
+    assert "tw_get_activity_analysis" in names
+    assert "tw_get_activity_workout_zone_detection" in names
 
 
 async def test_public_mode_disables_disk_export_tools(public_mode, monkeypatch):
@@ -607,6 +620,34 @@ async def test_public_mode_disables_disk_export_tools(public_mode, monkeypatch):
     }
     export_csv.assert_not_called()
     storage.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "tw_get_processed_data",
+        "tw_get_new_processed_data",
+        "tw_get_activity_logs",
+        "tw_get_activity_strap_files",
+    ],
+)
+async def test_public_mode_disables_raw_activity_reads_before_client_construction(
+    public_mode, monkeypatch, tool_name
+):
+    get_client = AsyncMock(side_effect=AssertionError("disabled public tools must fail before client construction"))
+    monkeypatch.setattr(server_mod, "_get_client", get_client)
+
+    result = await server_mod.call_tool(tool_name, {"activity_id": "activity-123"})
+
+    assert json.loads(result[0].text) == {
+        "isError": True,
+        "error_code": "PUBLIC_RAW_DATA_DISABLED",
+        "message": (
+            "Raw activity data tools are disabled in public mode. "
+            "Use tw_get_activity_analysis for compact projected samples."
+        ),
+    }
+    get_client.assert_not_called()
 
 
 async def test_public_mode_disables_mutation_tools_by_default(public_mode, monkeypatch):
@@ -663,3 +704,238 @@ async def test_public_mode_returns_unknown_tool_without_upstream_token(public_mo
     }
     assert "tw_not_a_tool" not in result[0].text
     storage.assert_not_called()
+
+
+async def test_public_mode_projects_nested_success_results_before_serialization(public_mode, monkeypatch):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    monkeypatch.setattr(
+        server_mod.profile_mod,
+        "get_profile",
+        AsyncMock(
+            return_value={
+                "id": "private-profile-id",
+                "uuid": "7d5d7863-fac6-4fc2-8f96-c37f861c73f4",
+                "email": "athlete@example.test",
+                "device": {"serial_number": "private-serial"},
+                "weight": 72.5,
+                "nested": [{"ve": 58.7, "download_url": "https://example.test/file?token=private"}],
+                "unsafe_number": float("nan"),
+            }
+        ),
+    )
+
+    result = await server_mod.call_tool("tw_get_profile", {})
+
+    payload = json.loads(result[0].text)
+    assert payload == {"device": {}, "weight": 72.5, "nested": [{"ve": 58.7}]}
+    assert "athlete@example.test" not in result[0].text
+    assert "private" not in result[0].text
+    json.dumps(payload, allow_nan=False)
+
+
+@pytest.mark.parametrize("include_location", [False, True])
+async def test_public_mode_allows_location_only_for_explicit_analysis_opt_in(
+    public_mode, monkeypatch, include_location
+):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    route = AsyncMock(
+        return_value={
+            "activity_id": "activity-123",
+            "identity": {"name": "Ride", "home_lat": 46.1, "home_long": 7.1},
+            "summary": {"latitude": 46.2, "longitude": 7.2},
+            "channels": {
+                "position_lat": {"source": "fit_export", "canonical_unit": "semicircles"},
+                "position_long": {"source": "fit_export", "canonical_unit": "semicircles"},
+                "heart_rate": {"source": "fit_export", "canonical_unit": "bpm"},
+            },
+            "raw_samples": {
+                "data": [
+                    {
+                        "elapsed_seconds": 0,
+                        "position_lat": 550000000,
+                        "position_long": 85000000,
+                        "latitude": 46.3,
+                        "home_lat": 46.1,
+                        "heart_rate": 141,
+                    }
+                ]
+            },
+        }
+    )
+    monkeypatch.setattr(server_mod.activity_analysis_mod, "tw_get_activity_analysis", route)
+
+    result = await server_mod.call_tool(
+        "tw_get_activity_analysis",
+        {"activity_id": "activity-123", "include_location": include_location},
+    )
+
+    payload = json.loads(result[0].text)
+    assert payload["activity_id"] == "activity-123"
+    assert "home_lat" not in result[0].text
+    assert "latitude" not in result[0].text
+    if include_location:
+        assert set(payload["channels"]) == {"position_lat", "position_long", "heart_rate"}
+        assert payload["raw_samples"]["data"] == [
+            {
+                "elapsed_seconds": 0,
+                "position_lat": 550000000,
+                "position_long": 85000000,
+                "heart_rate": 141,
+            }
+        ]
+    else:
+        assert set(payload["channels"]) == {"heart_rate"}
+        assert payload["raw_samples"]["data"] == [{"elapsed_seconds": 0, "heart_rate": 141}]
+
+
+async def test_public_mode_never_exposes_location_through_another_tool(public_mode, monkeypatch):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    monkeypatch.setattr(
+        server_mod.activity_files_mod,
+        "get_activity_workout_zone_detection",
+        AsyncMock(
+            return_value={
+                "zone_summary_table": {"Duration [sec]": {"Zone 1": 10}},
+                "position_lat": 550000000,
+                "position_long": 85000000,
+                "raw_samples": {
+                    "data": [{"elapsed_seconds": 0, "position_lat": 550000000, "position_long": 85000000}]
+                },
+            }
+        ),
+    )
+
+    result = await server_mod.call_tool(
+        "tw_get_activity_workout_zone_detection",
+        {"activity_id": "activity-123", "include": ["position_lat", "position_long"]},
+    )
+
+    payload = json.loads(result[0].text)
+    assert payload == {"zone_summary_table": {"Duration [sec]": {"Zone 1": 10}}}
+    assert "position_lat" not in result[0].text
+    assert "position_long" not in result[0].text
+
+
+async def test_public_mode_contains_handler_error_without_private_text(public_mode, monkeypatch, caplog):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    private_error = "athlete@example.test /private/tmp/file.fit?token=secret"
+    monkeypatch.setattr(server_mod.profile_mod, "get_profile", AsyncMock(side_effect=RuntimeError(private_error)))
+
+    with caplog.at_level("ERROR", logger="tymewear_mcp.server"):
+        result = await server_mod.call_tool("tw_get_profile", {})
+
+    assert json.loads(result[0].text) == {
+        "isError": True,
+        "error_code": "PUBLIC_TOOL_FAILED",
+        "message": "Public tool request failed.",
+    }
+    assert "RuntimeError" in caplog.text
+    assert "athlete@example.test" not in caplog.text
+    assert "/private/tmp" not in caplog.text
+    assert "token=secret" not in caplog.text
+    mock_client.close.assert_awaited_once()
+
+
+async def test_public_mode_contains_client_close_error_without_private_text(public_mode, monkeypatch, caplog):
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock(side_effect=RuntimeError("/tmp/private?token=secret"))
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    monkeypatch.setattr(server_mod.profile_mod, "get_profile", AsyncMock(return_value={"weight": 72.5}))
+
+    with caplog.at_level("ERROR", logger="tymewear_mcp.server"):
+        result = await server_mod.call_tool("tw_get_profile", {})
+
+    assert json.loads(result[0].text) == {
+        "isError": True,
+        "error_code": "PUBLIC_TOOL_FAILED",
+        "message": "Public tool request failed.",
+    }
+    assert "RuntimeError" in caplog.text
+    assert "/tmp/private" not in caplog.text
+    assert "token=secret" not in caplog.text
+
+
+async def test_local_mode_preserves_handler_exception_behavior(monkeypatch):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    monkeypatch.setattr(server_mod.profile_mod, "get_profile", AsyncMock(side_effect=RuntimeError("local failure")))
+
+    with pytest.raises(RuntimeError, match="local failure"):
+        await server_mod.call_tool("tw_get_profile", {})
+
+    mock_client.close.assert_not_called()
+
+
+async def test_public_mode_returns_private_text_free_credential_error(public_mode, monkeypatch):
+    monkeypatch.setattr(
+        server_mod,
+        "_get_client",
+        lambda: (_ for _ in ()).throw(
+            public_mod.PublicCredentialError("athlete@example.test /tmp/token-file?token=secret")
+        ),
+    )
+
+    result = await server_mod.call_tool("tw_get_profile", {})
+
+    assert json.loads(result[0].text) == {
+        "isError": True,
+        "error_code": "TYMEWEAR_UPSTREAM_TOKEN_REQUIRED",
+        "message": "Public Tyme Wear credentials are unavailable.",
+    }
+    assert "athlete@example.test" not in result[0].text
+    assert "/tmp" not in result[0].text
+    assert "token=secret" not in result[0].text
+
+
+async def test_public_mode_projects_early_disabled_and_unknown_results(public_mode, monkeypatch):
+    calls = []
+
+    def project(tool_name, value, *, include_location=False):
+        calls.append((tool_name, include_location, value["error_code"]))
+        return {**value, "projected": True}
+
+    monkeypatch.setattr(server_mod, "project_public_tool_result", project, raising=False)
+    get_client = AsyncMock(side_effect=AssertionError("early public errors must not construct a client"))
+    monkeypatch.setattr(server_mod, "_get_client", get_client)
+
+    disabled = await server_mod.call_tool("tw_get_processed_data", {"activity_id": "activity-123"})
+    unknown = await server_mod.call_tool("tw_not_a_tool", {})
+
+    assert json.loads(disabled[0].text)["projected"] is True
+    assert json.loads(unknown[0].text)["projected"] is True
+    assert calls == [
+        ("tw_get_processed_data", False, "PUBLIC_RAW_DATA_DISABLED"),
+        ("tw_not_a_tool", False, "UNKNOWN_TOOL"),
+    ]
+    get_client.assert_not_called()
+
+
+async def test_public_mode_contains_projection_failure_with_stable_error(public_mode, monkeypatch, caplog):
+    get_client = AsyncMock(side_effect=AssertionError("disabled tool must not construct a client"))
+    monkeypatch.setattr(server_mod, "_get_client", get_client)
+    monkeypatch.setattr(
+        server_mod,
+        "project_public_tool_result",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("athlete@example.test /private/tmp/result?token=secret")
+        ),
+    )
+
+    malicious_tool_name = "athlete@example.test /private/tmp/result?token=secret"
+    with caplog.at_level("ERROR", logger="tymewear_mcp.server"):
+        result = await server_mod.call_tool(malicious_tool_name, {})
+
+    assert json.loads(result[0].text) == {
+        "isError": True,
+        "error_code": "PUBLIC_TOOL_FAILED",
+        "message": "Public tool request failed.",
+    }
+    assert "RuntimeError" in caplog.text
+    assert "athlete@example.test" not in caplog.text
+    assert "/private/tmp" not in caplog.text
+    assert "token=secret" not in caplog.text
+    get_client.assert_not_called()

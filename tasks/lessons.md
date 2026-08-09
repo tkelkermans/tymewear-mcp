@@ -16,3 +16,11 @@
   the same bounded JSON-safe scalar/name/unit policy to values and nested
   provenance. Optional capability gaps must not automatically downgrade the
   whole analysis.
+- Apply the same semantic privacy checks to source-controlled dictionary keys
+  and string values. Reject embedded absolute paths, bare storage hosts,
+  emails, credentials, tokens, and UUID identity material, while preserving
+  only explicitly contracted identifiers such as `activity_id`.
+- Make public privacy allowlists structural, not name-only: UUID recognition is
+  version-agnostic, location metadata accepts only documented metadata fields
+  and shapes, and any runtime input constraint needed by MCP clients must also
+  appear in the published JSON Schema.

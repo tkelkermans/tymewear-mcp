@@ -2,12 +2,29 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import unquote
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+from tymewear_mcp.tools._safe_values import safe_name
 
 PATH_DELIMITERS = frozenset("/\\?#")
+ANALYSIS_CHANNEL_PATTERN = r"^[A-Za-z][A-Za-z0-9_. -]*$"
+AnalysisChannel = Annotated[
+    StrictStr,
+    StringConstraints(max_length=64, pattern=ANALYSIS_CHANNEL_PATTERN),
+]
 
 
 def _unquote_repeatedly(value: str) -> str:
@@ -69,6 +86,25 @@ class GetActivityDetailInput(ActivityIdMixin):
             "e.g. ['ext_bike_power','predict_ve_v3','times_zone']"
         ),
     )
+
+
+class GetActivityAnalysisInput(ActivityIdMixin):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    activity_id: str = Field(description="Activity UUID")
+    offset: StrictInt = Field(default=0, ge=0)
+    limit: StrictInt = Field(default=500, ge=1, le=1000)
+    channels: list[AnalysisChannel] | None = Field(default=None, min_length=1, max_length=32)
+    include_location: StrictBool = False
+
+    @field_validator("channels")
+    @classmethod
+    def validate_channels(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if any(safe_name(channel, max_length=64) is None for channel in value):
+            raise ValueError("channels must contain safe names of at most 64 characters")
+        return value
 
 
 class ComputePowerAtThresholdInput(ActivityIdMixin):

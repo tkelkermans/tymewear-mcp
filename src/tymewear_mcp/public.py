@@ -28,6 +28,7 @@ from starlette.routing import Route
 from starlette.types import Message, Receive, Scope, Send
 
 from tymewear_mcp.auth.oidc import OIDCTokenVerifier
+from tymewear_mcp.tools._privacy import project_public_payload
 
 DEFAULT_PUBLIC_MCP_PATH = "/mcp"
 DEFAULT_PUBLIC_SCOPE = "tymewear:mcp"
@@ -41,10 +42,35 @@ UPSTREAM_AUTHORIZATION_HEADER = "x-tymewear-authorization"
 MAX_UPSTREAM_TOKEN_LENGTH = 4096
 MIN_PUBLIC_BEARER_TOKEN_LENGTH = 32
 DEFAULT_PUBLIC_MAX_BODY_BYTES = 1_048_576
+_ACTIVITY_OBJECT_TOOLS = frozenset(
+    {
+        "tw_get_activities",
+        "tw_get_activity",
+        "tw_get_activity_status",
+        "tw_get_pinned_activity",
+        "tw_pin_activity",
+    }
+)
 
 
 class PublicCredentialError(RuntimeError):
     """Raised when a public request lacks usable request-scoped upstream credentials."""
+
+
+def project_public_tool_result(
+    tool_name: str,
+    value: Any,
+    *,
+    include_location: bool = False,
+) -> Any:
+    """Apply the public response policy for one named tool."""
+    compact_analysis = tool_name == "tw_get_activity_analysis"
+    return project_public_payload(
+        value,
+        compact_analysis=compact_analysis,
+        allow_analysis_location=compact_analysis and include_location is True,
+        preserve_activity_ids=tool_name in _ACTIVITY_OBJECT_TOOLS,
+    )
 
 
 def _split_tokens(value: str | None) -> list[str]:

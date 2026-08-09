@@ -43,3 +43,32 @@
 - Scoped Ruff and mypy: clean.
 - Fresh full suite: 456 passed.
 - Task 5 server/public registration: untouched.
+
+# Task 5: Public registration and privacy boundary
+
+- [x] Add focused RED tests for the total recursive privacy projector, including
+  location scoping, nested identifiers/secrets/paths, unsupported values, and
+  compact-analysis availability/provenance preservation.
+- [x] Add focused RED tests for strict `GetActivityAnalysisInput` validation.
+- [x] Add focused RED tests for exact server registration and dispatch.
+- [x] Add focused RED tests for public-only disabled raw/file reads, all-result
+  projection, stable exception containment, and unchanged local behavior.
+- [x] Update the public endpoint verifier tests and capture one aggregate RED run.
+- [x] Implement the minimal centralized privacy projector and public wrapper.
+- [x] Implement strict validation, exact analysis registration/dispatch, and
+  public-only pre-client disabling/exception containment.
+- [x] Update the verifier and README public contracts.
+- [x] Run focused GREEN, scoped Ruff and mypy, and a fresh full suite.
+- [x] Self-review, request independent review, write `task-5-report.md`, and
+  update the progress ledger.
+- [x] Create one unsigned Task 5 commit without pushing.
+
+## Task 5 review
+
+- Aggregate RED: 46 failed, 169 passed.
+- Review-driven RED groups: 2 failed, 5 failed, and 5 failed; all are GREEN.
+- Final focused GREEN: 223 passed.
+- Scoped Ruff and mypy: clean.
+- Fresh full suite: 508 passed.
+- Independent re-review: Ready with no Critical or Important findings.
+- No deploy or push performed.

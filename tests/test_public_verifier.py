@@ -124,6 +124,10 @@ def test_public_verifier_checks_all_default_public_disabled_tools():
         "tw_export_csv",
         "tw_export_csv_full",
         "tw_export_fit",
+        "tw_get_activity_logs",
+        "tw_get_activity_strap_files",
+        "tw_get_new_processed_data",
+        "tw_get_processed_data",
         "tw_pin_activity",
         "tw_respond_max_value",
         "tw_tag_new_zone",
@@ -133,3 +137,11 @@ def test_public_verifier_checks_all_default_public_disabled_tools():
 
     assert expected == verifier.PUBLIC_DISABLED_TOOL_NAMES
     assert verifier._exposed_disabled_public_tools(expected | {"tw_get_profile"}) == sorted(expected)
+
+
+def test_public_verifier_requires_compact_analysis_and_profile_tools():
+    verifier = _load_verifier()
+
+    assert {"tw_get_activity_analysis", "tw_get_profile"} == verifier.REQUIRED_PUBLIC_TOOL_NAMES
+    assert verifier._missing_required_public_tools({"tw_get_profile"}) == ["tw_get_activity_analysis"]
+    assert verifier._missing_required_public_tools(verifier.REQUIRED_PUBLIC_TOOL_NAMES) == []

@@ -14,9 +14,10 @@ from pydantic import ValidationError
 
 from tymewear_mcp.auth.storage import CredentialStorage
 from tymewear_mcp.client.http import TymeClient
-from tymewear_mcp.public import PublicCredentialError
+from tymewear_mcp.public import PublicCredentialError, project_public_tool_result
 from tymewear_mcp.tools import account as account_mod
 from tymewear_mcp.tools import activities as activities_mod
+from tymewear_mcp.tools import activity_analysis as activity_analysis_mod
 from tymewear_mcp.tools import activity_files as activity_files_mod
 from tymewear_mcp.tools import auth_status as auth_status_mod
 from tymewear_mcp.tools import breathing_data as breathing_data_mod
@@ -29,10 +30,12 @@ from tymewear_mcp.tools import threshold_analysis as threshold_analysis_mod
 from tymewear_mcp.tools import thresholds as thresholds_mod
 from tymewear_mcp.tools import training_plans as training_plans_mod
 from tymewear_mcp.tools import zones as zones_mod
+from tymewear_mcp.tools._privacy import project_public_payload
 from tymewear_mcp.tools._validation import (
     ComputePowerAtThresholdInput,
     ExportInput,
     GetActivitiesInput,
+    GetActivityAnalysisInput,
     GetActivityDetailInput,
     GetActivityInput,
     GetProcessedDataInput,
@@ -57,6 +60,12 @@ _PUBLIC_DISABLED_EXPORT_TOOLS = {
     "tw_export_csv",
     "tw_export_csv_full",
     "tw_export_fit",
+}
+_PUBLIC_DISABLED_RAW_TOOLS = {
+    "tw_get_activity_logs",
+    "tw_get_activity_strap_files",
+    "tw_get_new_processed_data",
+    "tw_get_processed_data",
 }
 _PUBLIC_MUTATION_TOOLS = {
     "tw_delete_activity",
@@ -113,6 +122,17 @@ def _public_exports_disabled_result() -> dict[str, Any]:
     }
 
 
+def _public_raw_data_disabled_result() -> dict[str, Any]:
+    return {
+        "isError": True,
+        "error_code": "PUBLIC_RAW_DATA_DISABLED",
+        "message": (
+            "Raw activity data tools are disabled in public mode. "
+            "Use tw_get_activity_analysis for compact projected samples."
+        ),
+    }
+
+
 def _public_mutations_disabled_result() -> dict[str, Any]:
     return {
         "isError": True,
@@ -124,11 +144,11 @@ def _public_mutations_disabled_result() -> dict[str, Any]:
     }
 
 
-def _public_credentials_error_result(error: PublicCredentialError) -> dict[str, Any]:
+def _public_credentials_error_result() -> dict[str, Any]:
     return {
         "isError": True,
         "error_code": "TYMEWEAR_UPSTREAM_TOKEN_REQUIRED",
-        "message": str(error),
+        "message": "Public Tyme Wear credentials are unavailable.",
     }
 
 
@@ -146,6 +166,36 @@ def _public_unknown_tool_result() -> dict[str, Any]:
         "error_code": "UNKNOWN_TOOL",
         "message": "Unknown tool.",
     }
+
+
+def _public_tool_failed_result() -> dict[str, Any]:
+    return {
+        "isError": True,
+        "error_code": "PUBLIC_TOOL_FAILED",
+        "message": "Public tool request failed.",
+    }
+
+
+def _log_public_failure(stage: str, error: Exception) -> None:
+    logger.error(
+        "Public tool operation failed during %s (%s)",
+        stage,
+        type(error).__name__,
+    )
+
+
+def _text_result(name: str, result: Any, *, include_location: bool = False) -> list[TextContent]:
+    if _public_mode:
+        try:
+            result = project_public_tool_result(name, result, include_location=include_location)
+            serialized = json.dumps(result, indent=2, allow_nan=False)
+        except Exception as exc:
+            _log_public_failure("response projection", exc)
+            fallback = project_public_payload(_public_tool_failed_result())
+            serialized = json.dumps(fallback, indent=2, allow_nan=False)
+    else:
+        serialized = json.dumps(result, indent=2, default=str)
+    return [TextContent(type="text", text=serialized)]
 
 
 def _registered_tools() -> list[Tool]:
@@ -181,9 +231,19 @@ def _registered_tools() -> list[Tool]:
             description=(
                 "Get full detail for a single Tyme Wear activity (thresholds, zones, TSS, duration). "
                 "Large per-second arrays (x, predict_*, ext_*) are summarised under _omitted_fields by default; "
-                "pass include=[...] to return specific heavy fields verbatim."
+                "local stdio callers may pass include=[...] to return specific heavy fields. "
+                "Public mode always returns privacy-projected compact data."
             ),
             inputSchema=GetActivityDetailInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_activity_analysis",
+            description=(
+                "Get a compact, read-only activity analysis with reconciled timestamps, labeled summaries, "
+                "per-channel processed/FIT fallback samples, explicit capability states, and pagination. "
+                "Analytic sample coordinates require include_location=true."
+            ),
+            inputSchema=GetActivityAnalysisInput.model_json_schema(),
         ),
         Tool(
             name="tw_get_activity_status",
@@ -288,7 +348,8 @@ def _registered_tools() -> list[Tool]:
             description=(
                 "Get labeled workout zone detection for an activity: per-zone time/calories, "
                 "VT1/VT2/Endurance VE+HR+confidence, quality flags, and estimated power. "
-                "Per-second point clouds are summarised under _omitted_fields; pass include=[...] for them verbatim."
+                "Per-second point clouds are summarised under _omitted_fields. Local stdio callers may pass "
+                "include=[...] for them; public mode always returns privacy-projected compact data."
             ),
             inputSchema=GetActivityDetailInput.model_json_schema(),
         ),
@@ -383,7 +444,7 @@ def _registered_tool_names() -> set[str]:
 async def list_tools() -> list[Tool]:
     tools = _registered_tools()
     if _public_mode:
-        disabled_tools = set(_PUBLIC_DISABLED_EXPORT_TOOLS)
+        disabled_tools = set(_PUBLIC_DISABLED_EXPORT_TOOLS | _PUBLIC_DISABLED_RAW_TOOLS)
         if not _public_allow_mutations:
             disabled_tools.update(_PUBLIC_MUTATION_TOOLS)
         return [tool for tool in tools if tool.name not in disabled_tools]
@@ -393,19 +454,27 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()  # type: ignore[untyped-decorator]
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     if _public_mode and name in _PUBLIC_DISABLED_EXPORT_TOOLS:
-        return [TextContent(type="text", text=json.dumps(_public_exports_disabled_result(), indent=2))]
+        return _text_result(name, _public_exports_disabled_result())
+    if _public_mode and name in _PUBLIC_DISABLED_RAW_TOOLS:
+        return _text_result(name, _public_raw_data_disabled_result())
     if _public_mode and not _public_allow_mutations and name in _PUBLIC_MUTATION_TOOLS:
-        return [TextContent(type="text", text=json.dumps(_public_mutations_disabled_result(), indent=2))]
+        return _text_result(name, _public_mutations_disabled_result())
     if _public_mode and name not in _registered_tool_names():
-        return [TextContent(type="text", text=json.dumps(_public_unknown_tool_result(), indent=2))]
+        return _text_result(name, _public_unknown_tool_result())
 
     try:
         client = _get_client()
-    except PublicCredentialError as exc:
-        return [TextContent(type="text", text=json.dumps(_public_credentials_error_result(exc), indent=2))]
+    except PublicCredentialError:
+        return _text_result(name, _public_credentials_error_result())
+    except Exception as exc:
+        if not _public_mode:
+            raise
+        _log_public_failure("client construction", exc)
+        return _text_result(name, _public_tool_failed_result())
 
     params: Any
     result: Any
+    include_location = False
 
     try:
         if name == "tw_auth_status":
@@ -444,6 +513,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         elif name == "tw_get_activity":
             params = GetActivityDetailInput.model_validate(arguments)
             result = await activities_mod.get_activity(client, params.activity_id, include=params.include)
+
+        elif name == "tw_get_activity_analysis":
+            params = GetActivityAnalysisInput.model_validate(arguments)
+            include_location = params.include_location is True
+            result = await activity_analysis_mod.tw_get_activity_analysis(
+                client,
+                params.activity_id,
+                offset=params.offset,
+                limit=params.limit,
+                channels=params.channels,
+                include_location=params.include_location,
+            )
 
         elif name == "tw_get_activity_status":
             params = GetActivityInput.model_validate(arguments)
@@ -607,11 +688,20 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         if not _public_mode:
             raise
         result = _public_validation_error_result()
+    except Exception as exc:
+        if not _public_mode:
+            raise
+        _log_public_failure("handler", exc)
+        result = _public_tool_failed_result()
     finally:
         if _public_mode:
-            await client.close()
+            try:
+                await client.close()
+            except Exception as exc:
+                _log_public_failure("client close", exc)
+                result = _public_tool_failed_result()
 
-    return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+    return _text_result(name, result, include_location=include_location)
 
 
 def run_server() -> None:

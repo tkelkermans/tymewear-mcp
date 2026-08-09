@@ -20,12 +20,17 @@ PUBLIC_DISABLED_TOOL_NAMES = {
     "tw_export_csv",
     "tw_export_csv_full",
     "tw_export_fit",
+    "tw_get_activity_logs",
+    "tw_get_activity_strap_files",
+    "tw_get_new_processed_data",
+    "tw_get_processed_data",
     "tw_pin_activity",
     "tw_respond_max_value",
     "tw_tag_new_zone",
     "tw_tag_threshold",
     "tw_update_profile",
 }
+REQUIRED_PUBLIC_TOOL_NAMES = {"tw_get_activity_analysis", "tw_get_profile"}
 EXPECTED_PUBLIC_SECURITY_HEADERS = {
     "cache-control": "no-store",
     "pragma": "no-cache",
@@ -149,6 +154,10 @@ def _exposed_disabled_public_tools(tool_names: set[str]) -> list[str]:
     return sorted(PUBLIC_DISABLED_TOOL_NAMES.intersection(tool_names))
 
 
+def _missing_required_public_tools(tool_names: set[str]) -> list[str]:
+    return sorted(REQUIRED_PUBLIC_TOOL_NAMES.difference(tool_names))
+
+
 def verify_public_endpoint(mcp_url: str, bearer_token: str, timeout: float) -> None:
     health_url = _health_url(mcp_url)
     expect_hsts = _expects_hsts(mcp_url)
@@ -196,8 +205,10 @@ def verify_public_endpoint(mcp_url: str, bearer_token: str, timeout: float) -> N
         tool_names = {
             name for tool in tools_body.get("result", {}).get("tools", []) if isinstance(name := tool.get("name"), str)
         }
-        if "tw_get_profile" not in tool_names:
-            raise RuntimeError("authenticated tools/list did not include expected Tymewear tools")
+        missing_required_tools = _missing_required_public_tools(tool_names)
+        if missing_required_tools:
+            names = ", ".join(missing_required_tools)
+            raise RuntimeError(f"authenticated tools/list omitted required public tools: {names}")
         exposed_blocked_tools = _exposed_disabled_public_tools(tool_names)
         if exposed_blocked_tools:
             names = ", ".join(exposed_blocked_tools)

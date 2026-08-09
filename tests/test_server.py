@@ -43,6 +43,91 @@ async def test_list_tools_registers_new_athlete_read_tools():
     assert set(NEW_TOOLS).issubset(names)
 
 
+async def test_list_tools_registers_activity_analysis_with_exact_input_schema():
+    tools = await server_mod.list_tools()
+
+    matches = [tool for tool in tools if tool.name == "tw_get_activity_analysis"]
+    assert len(matches) == 1
+    schema = matches[0].inputSchema
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["activity_id"]
+    assert set(schema["properties"]) == {
+        "activity_id",
+        "offset",
+        "limit",
+        "channels",
+        "include_location",
+    }
+    assert schema["properties"]["offset"]["default"] == 0
+    assert schema["properties"]["limit"]["default"] == 500
+    assert schema["properties"]["limit"]["maximum"] == 1000
+    channel_variants = schema["properties"]["channels"]["anyOf"]
+    channel_array = next(variant for variant in channel_variants if variant.get("type") == "array")
+    assert channel_array["minItems"] == 1
+    assert channel_array["maxItems"] == 32
+    assert channel_array["items"]["maxLength"] == 64
+    assert channel_array["items"]["pattern"] == r"^[A-Za-z][A-Za-z0-9_. -]*$"
+
+
+async def test_heavy_include_descriptions_distinguish_local_and_public_behavior():
+    tools = {tool.name: tool for tool in await server_mod.list_tools()}
+
+    for tool_name in ("tw_get_activity", "tw_get_activity_workout_zone_detection"):
+        description = tools[tool_name].description.lower()
+        assert "local stdio" in description
+        assert "public mode" in description
+        assert "project" in description
+
+
+async def test_activity_analysis_route_forwards_validated_arguments(monkeypatch):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    route = AsyncMock(return_value={"activity_id": "activity-uuid", "availability": {"state": "available"}})
+    monkeypatch.setattr(server_mod.activity_analysis_mod, "tw_get_activity_analysis", route)
+
+    result = await server_mod.call_tool(
+        "tw_get_activity_analysis",
+        {
+            "activity_id": "activity-uuid",
+            "offset": 7,
+            "limit": 42,
+            "channels": ["heart_rate", "power"],
+            "include_location": True,
+        },
+    )
+
+    route.assert_awaited_once_with(
+        mock_client,
+        "activity-uuid",
+        offset=7,
+        limit=42,
+        channels=["heart_rate", "power"],
+        include_location=True,
+    )
+    assert json.loads(result[0].text) == {
+        "activity_id": "activity-uuid",
+        "availability": {"state": "available"},
+    }
+
+
+async def test_activity_analysis_route_uses_documented_defaults(monkeypatch):
+    mock_client = AsyncMock()
+    monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)
+    route = AsyncMock(return_value={"activity_id": "activity-uuid"})
+    monkeypatch.setattr(server_mod.activity_analysis_mod, "tw_get_activity_analysis", route)
+
+    await server_mod.call_tool("tw_get_activity_analysis", {"activity_id": "activity-uuid"})
+
+    route.assert_awaited_once_with(
+        mock_client,
+        "activity-uuid",
+        offset=0,
+        limit=500,
+        channels=None,
+        include_location=False,
+    )
+
+
 async def test_tw_get_activities_forwards_dashboard_filters(monkeypatch):
     mock_client = AsyncMock()
     monkeypatch.setattr(server_mod, "_get_client", lambda: mock_client)

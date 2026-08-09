@@ -10,11 +10,12 @@ Tyme Wear makes the VitalPro chest strap, a wearable breathing sensor that measu
 
 ## Features
 
-- **39 MCP tools** for profile, activities, breathing data, VE thresholds, per-activity insights, activity files/logs/detection, training plans, workout recommendations, integrations, subscription/account, resting/max physiology, and exports
+- **40 MCP tools** for profile, activities, breathing data, VE thresholds, compact per-activity analysis, activity files/detection, training plans, workout recommendations, integrations, subscription/account, resting/max physiology, and exports
 - **Secure credential storage** via system keyring (macOS Keychain / Windows Credential Manager) with AES-256-GCM encrypted file fallback
 - **Auto-authentication** with token caching and automatic re-auth on expiry
 - **Smart breathing data** with summary, window, and full modes to avoid context overflow
 - **Per-activity insights** (`tw_get_activity_insights`): detected VT1/VT2/VO2max with measured power-at-threshold, confidence scores, a truncated-test flag, and per-zone time/calories — in one call, no FIT parsing
+- **Compact activity analysis** (`tw_get_activity_analysis`): reconciled timestamps, labeled summary and capability states, per-channel processed/new-processed/FIT fallback, deterministic elapsed-second merging, and pagination
 - **Slim activity payloads**: `tw_get_activity` and `tw_get_activity_workout_zone_detection` drop multi-MB per-second arrays by default (opt back in with `include=[...]`)
 - **Public Streamable HTTP mode** with static-bearer or OAuth auth (one-click claude.ai connector), single-tenant to the operator's Tyme Wear account
 
@@ -163,8 +164,8 @@ TYMEWEAR_PUBLIC_URL="https://mcp.example.com/mcp" \
 python scripts/verify_public_endpoint.py --bearer-token-file "$TOKEN_FILE"
 ```
 
-The verifier checks `/healthz`, unauthenticated `/mcp` rejection, authenticated MCP `initialize`, authenticated `tools/list`, and public security/no-cache headers.
-It also confirms default public deployments do not advertise disk export or mutation tools.
+The verifier checks `/healthz`, unauthenticated `/mcp` rejection, authenticated MCP `initialize`, authenticated `tools/list`, required compact-analysis/profile tools, and public security/no-cache headers.
+It also confirms public deployments do not advertise raw activity reads or disk exports, and that default deployments do not advertise mutation tools.
 
 ### Public Client Authentication
 
@@ -186,10 +187,24 @@ In public mode:
 
 - Access is gated by the static bearer token and/or the OAuth email allowlist; only allow-listed identities connect.
 - The operator's Tyme Wear credentials live only in server-side env (keep them in a secret manager). They are read straight from the environment — public mode does **not** touch the local keyring or encrypted credential file (those write under `$HOME`, which is read-only on serverless).
-- Activity/profile/training data is relayed in MCP responses and sanitized for secret-like fields.
+- Every tool result and stable public error passes through one non-mutating recursive privacy projection before JSON serialization. It removes non-JSON values, non-finite numbers, emails, user/account/profile UUIDs, device identifiers/serials, tokens, signed/callback/download URLs, S3 or temporary paths, heavy raw fields, and coordinates outside the explicit analysis location contract.
+- `tw_get_activity_analysis` is the public compact raw-sample interface. It keeps labeled availability, capability, channel, provenance, summary, and paginated sample data. `include_location` must be the literal boolean `true`; only `raw_samples.data[*].position_lat`/`position_long` and their matching channel metadata may then survive. Home, generic, and unrelated coordinates are always removed.
 - Public responses include `Cache-Control: no-store`, `Pragma: no-cache`, `X-Robots-Tag: noindex, nofollow`, HSTS for HTTPS public URLs, and baseline security headers to reduce accidental intermediary caching, indexing, and browser-side leakage of customer data.
 - Profile/activity mutation tools are hidden and return `PUBLIC_MUTATIONS_DISABLED` by default. Only enable them with `--allow-mutations` or `TYMEWEAR_PUBLIC_ALLOW_MUTATIONS=true` for trusted deployments.
 - CSV, FIT, and strap-file export tools return `PUBLIC_EXPORTS_DISABLED` because the local implementation writes files to disk.
+- `tw_get_processed_data`, `tw_get_new_processed_data`, `tw_get_activity_logs`, and `tw_get_activity_strap_files` are hidden and return `PUBLIC_RAW_DATA_DISABLED`, even when mutations are enabled. Local stdio mode retains these tools. Compact workout-zone detection remains public.
+
+Public tool errors are stable and do not echo upstream exception text:
+
+| Code | Meaning |
+|------|---------|
+| `INVALID_TOOL_ARGUMENTS` | The request does not match the published strict tool schema |
+| `UNKNOWN_TOOL` | The requested tool is not registered |
+| `TYMEWEAR_UPSTREAM_TOKEN_REQUIRED` | Server-side Tyme Wear credentials are unavailable |
+| `PUBLIC_TOOL_FAILED` | A public client, handler, close, or projection operation failed |
+| `PUBLIC_RAW_DATA_DISABLED` | A raw/log/file-read tool is unavailable in public mode |
+| `PUBLIC_EXPORTS_DISABLED` | A disk-writing export is unavailable in public mode |
+| `PUBLIC_MUTATIONS_DISABLED` | A mutation is unavailable without explicit trusted-deployment opt-in |
 
 ### Production Hardening
 
@@ -219,7 +234,8 @@ In public mode:
 | Tool | Description |
 |------|-------------|
 | `tw_get_activities` | List activities with cursor pagination and website filters for sports, activity types, search, user ID, and pro team |
-| `tw_get_activity` | Full activity detail: duration, thresholds, zones, TSS, firmware, third-party links. Heavy per-second arrays are summarised under `_omitted_fields` by default; pass `include=[...]` to fetch specific ones |
+| `tw_get_activity` | Full activity detail: duration, thresholds, zones, TSS, firmware, third-party links. Heavy arrays are summarised by default. Local stdio callers may use `include=[...]`; public mode still returns projected compact data |
+| `tw_get_activity_analysis` | Compact read-only analysis with reconciled timestamps, summary, breakpoints, explicit capabilities, per-channel source/unit/coverage/provenance, and samples merged before pagination. `include_location=true` opts into analytic sample coordinates only |
 | `tw_get_activity_insights` | Compact per-activity report: VT1/VT2/Endurance VE+HR+confidence, **measured power-at-threshold**, detected breakpoint times, per-zone time/calories, quality flags, a truncated-test flag, and VE targets — works for tests and rides |
 | `tw_get_activity_status` | Algorithm processing status for an activity |
 | `tw_pin_activity` | Pin/unpin an activity for threshold detection |
@@ -230,17 +246,17 @@ In public mode:
 
 | Tool | Description |
 |------|-------------|
-| `tw_get_processed_data` | Per-second breathing time-series with 3 modes: **summary** (aggregated stats — default), **window** (raw data for a time range), **full** (all records) |
-| `tw_get_new_processed_data` | New-format processed data (if available for the activity) |
+| `tw_get_processed_data` | Local-only per-second breathing time-series with summary, window, and full modes; public mode uses `tw_get_activity_analysis` instead |
+| `tw_get_new_processed_data` | Local-only new-format processed data when available; public mode uses `tw_get_activity_analysis` instead |
 
 ### Activity Files & Detection
 
 | Tool | Description |
 |------|-------------|
-| `tw_get_activity_logs` | Get read-only activity logs/events |
-| `tw_get_activity_strap_files` | Get strap-file metadata when available |
+| `tw_get_activity_logs` | Get local-only read-only activity logs/events |
+| `tw_get_activity_strap_files` | Get local-only strap-file metadata when available |
 | `tw_export_activity_strap_files` | Export raw strap files when available |
-| `tw_get_activity_workout_zone_detection` | Workout-zone detection (per-zone time/calories, VT1/VT2 VE+HR+confidence, estimated power). Per-second point clouds are summarised under `_omitted_fields`; pass `include=[...]` for them |
+| `tw_get_activity_workout_zone_detection` | Workout-zone detection (per-zone time/calories, VT1/VT2 VE+HR+confidence, estimated power). Point clouds are summarised by default. Local stdio callers may use `include=[...]`; public mode still returns projected compact data |
 
 ### Training Plans & Workouts
 
@@ -310,7 +326,7 @@ Once configured, you can ask Claude things like:
 - Tokens and credentials are **never** returned in MCP tool results (sanitized before reaching Claude)
 - Environment variable auth available for CI/containers: `TYMEWEAR_EMAIL` + `TYMEWEAR_PASSWORD`
 - File permissions set to 600 (owner read/write only) on encrypted credential files
-- Public mode requires bearer or OAuth authentication and is single-tenant: upstream Tyme Wear auth uses server-side `TYMEWEAR_EMAIL`/`TYMEWEAR_PASSWORD` env (never the local keyring or encrypted file, which are read-only on serverless), and disk-writing export tools are disabled
+- Public mode requires bearer or OAuth authentication and is single-tenant: upstream Tyme Wear auth uses server-side `TYMEWEAR_EMAIL`/`TYMEWEAR_PASSWORD` env (never the local keyring or encrypted file, which are read-only on serverless), every result is privacy-projected, and raw/file/export tools are disabled
 
 ## Architecture
 
@@ -318,7 +334,7 @@ Once configured, you can ask Claude things like:
 tymewear-mcp/
 ├── src/tymewear_mcp/
 │   ├── cli.py              # CLI entry point
-│   ├── server.py           # MCP server + 39 tool registrations
+│   ├── server.py           # MCP server + 40 tool registrations
 │   ├── public.py           # Public Streamable HTTP server + bearer/OAuth auth
 │   ├── auth/               # Credential storage (keyring → encrypted → env) + OIDC verifier (oidc.py)
 │   ├── client/             # Async HTTP client + Pydantic models
