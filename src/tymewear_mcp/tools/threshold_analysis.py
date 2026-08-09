@@ -2,7 +2,7 @@
 
 Tyme Wear spreads the physiology a coach needs across two endpoints: the labeled
 ``workout-zone-detection`` (per-zone time/calories, threshold VE/HR/confidence,
-quality, estimated power) and the activity detail (detected breakpoint *times* plus
+quality, vendor-reported power) and the activity detail (detected breakpoint *times* plus
 the displayed power profile in unlabeled positional ``new_zone_*_metrics`` arrays).
 ``extract_activity_insights`` merges both with the athlete's profile VE targets into
 one compact, labeled report.
@@ -10,13 +10,15 @@ one compact, labeled report.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from tymewear_mcp.tools.timestamps import reconcile_activity_timestamp
 
 # Positions inside the 28-element new_zone_<threshold>_metrics arrays (reverse-engineered).
 _METRIC_INSTANT_POWER = 12
 _METRIC_ROUNDED_POWER = 24
+
+ActivityKind = Literal["normal", "test", "unknown"]
 
 
 def _mmss_to_seconds(value: Any) -> int | None:
@@ -100,10 +102,33 @@ def _raw_channel_completeness(activity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _breakpoint_availability(name: str, *, detected: bool, is_test: bool) -> dict[str, str]:
+def _activity_kind(activity: dict[str, Any]) -> ActivityKind:
+    type_display = activity.get("type_display")
+    if isinstance(type_display, str):
+        normalized_display = type_display.strip().casefold()
+        if normalized_display == "normal activity":
+            return "normal"
+        if "test" in normalized_display:
+            return "test"
+
+    activity_type = activity.get("type")
+    if not isinstance(activity_type, bool) and str(activity_type).strip() == "0":
+        return "normal"
+    return "unknown"
+
+
+def _breakpoint_availability(name: str, *, detected: bool, activity_kind: ActivityKind) -> dict[str, str]:
+    if detected:
+        reason = "threshold_detected"
+    elif activity_kind == "test":
+        reason = "threshold_not_detected"
+    elif activity_kind == "normal":
+        reason = "normal_activity"
+    else:
+        reason = "activity_type_unknown"
     return {
         "state": "available" if detected else "not_computed",
-        "reason": "threshold_detected" if detected else ("threshold_not_detected" if is_test else "normal_activity"),
+        "reason": reason,
         "source": f"activity.new_zone_{name}",
     }
 
@@ -124,7 +149,7 @@ def extract_activity_insights(
     steady_raw = wzd.get("steady_state_intensity")
     steady: dict[str, Any] = steady_raw if isinstance(steady_raw, dict) else {}
 
-    # Labeled thresholds (VE/HR/confidence + estimated power) — present for tests and rides.
+    # Labeled thresholds (VE/HR/confidence + vendor-reported power) — present for tests and rides.
     thresholds: dict[str, Any] = {}
     for name, entry in zones.items():
         if name == "_quality" or not isinstance(entry, dict):
@@ -171,10 +196,7 @@ def extract_activity_insights(
         key: _mmss_to_seconds(activity.get(f"new_zone_{key}"))
         for key in ("vt1", "vt2", "vo2max", "fatmax")
     }
-    type_display = activity.get("type_display")
-    is_test = ve_curve_available or any(value is not None for value in parsed_breakpoints.values()) or (
-        isinstance(type_display, str) and "test" in type_display.lower()
-    )
+    activity_kind = _activity_kind(activity)
 
     # Detected breakpoints with displayed power profile (populated only for threshold tests).
     detected_breakpoints: dict[str, Any] = {}
@@ -182,13 +204,15 @@ def extract_activity_insights(
     for key in ("vt1", "vt2", "vo2max", "fatmax"):
         secs = parsed_breakpoints[key]
         if secs is None:
-            breakpoints[key] = {"availability": _breakpoint_availability(key, detected=False, is_test=is_test)}
+            breakpoints[key] = {
+                "availability": _breakpoint_availability(key, detected=False, activity_kind=activity_kind)
+            }
             continue
         metrics = activity.get(f"new_zone_{key}_metrics")
         displayed_power = _metric_num(metrics, _METRIC_ROUNDED_POWER)
         instant_power = _metric_num(metrics, _METRIC_INSTANT_POWER)
         breakpoint = {
-            "availability": _breakpoint_availability(key, detected=True, is_test=is_test),
+            "availability": _breakpoint_availability(key, detected=True, activity_kind=activity_kind),
             "time": activity.get(f"new_zone_{key}"),
             "time_seconds": secs,
             "displayed_power_w": displayed_power,
@@ -218,7 +242,7 @@ def extract_activity_insights(
         detected_breakpoints[key] = breakpoint
 
     truncated = (
-        is_test
+        activity_kind == "test"
         and ("vt1" in detected_breakpoints or "vt2" in detected_breakpoints)
         and "vo2max" not in detected_breakpoints
     )
@@ -265,9 +289,9 @@ def extract_activity_insights(
         "ve_curve_available": ve_curve_available,
         "truncated_test": truncated,
         "note": (
-            "Power is recorded from the power meter paired in the Tyme Wear app (measured, not estimated). "
-            "detected_breakpoints.displayed_power_w is the threshold power profile; "
-            "thresholds.steady_state_power_w is Tyme Wear's separate steady-state figure for the zone."
+            "thresholds.steady_state_power_w is vendor-reported from wzd.steady_state_intensity; "
+            "breakpoint power is vendor-reported from positional activity metric arrays. "
+            "The MCP does not verify the upstream calculation or measurement method."
         ),
     }
 
@@ -277,11 +301,10 @@ def compute_power_at_threshold(
     power_samples: list[list[float | None]],
     window_seconds: int = 15,
 ) -> dict[str, Any]:
-    """Average measured watts in a window around each detected breakpoint time.
+    """Average supplied watts in a window around each detected breakpoint time.
 
-    Tyme Wear has no measured power, so the caller supplies the power series
-    ``[[t_seconds, watts], ...]`` from the matching TrainingPeaks/Garmin ride
-    (watts may be ``None`` for gaps).
+    The caller supplies ``[[t_seconds, watts], ...]`` from a matching external
+    activity; watts may be ``None`` for gaps.
     """
     series = [(float(t), float(w)) for t, w in power_samples if t is not None and w is not None]
     out: dict[str, Any] = {}

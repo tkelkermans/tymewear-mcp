@@ -33,6 +33,7 @@ def _metrics(instant, hr, rounded, precise):
 
 TEST_ACTIVITY = {
     "id": "e4", "name": "Ramp", "sport": "2", "sport_display": "Bike", "data_type": "tyme-wear",
+    "type_display": "Threshold Test",
     "duration": "53:48", "duration_seconds": 3228, "kcal_expenditure": 644.0,
     "time_stamp": "2026-06-17T15:47:12Z", "unix_timestamp": 1781704032,
     "tz_name": "CEST", "tz_offset": "2.0",
@@ -145,6 +146,17 @@ def test_insights_add_metric_units_source_paths_and_methods_without_removing_sca
     }
 
 
+def test_power_note_reports_vendor_paths_without_claiming_measurement_method():
+    r = extract_activity_insights(WZD, TEST_ACTIVITY, PROFILE)
+
+    note = r["note"]
+    assert "vendor-reported" in note
+    assert "wzd.steady_state_intensity" in note
+    assert "positional activity metric arrays" in note
+    assert "does not verify the upstream calculation or measurement method" in note
+    assert "measured, not estimated" not in note
+
+
 def test_model_input_bounds_are_not_presented_as_activity_extrema():
     r = extract_activity_insights(WZD, TEST_ACTIVITY, PROFILE)
 
@@ -207,7 +219,7 @@ def test_raw_channel_completeness_uses_arrays_and_omitted_lengths_including_zero
 def test_truncated_test_flagged():
     activity = {
         "id": "x", "sport": "2", "new_zone_vt1": "20:00", "new_zone_vt2": "28:00",
-        "new_zone_vo2max": "", "predict_ve_v3": [1.0],
+        "new_zone_vo2max": "", "predict_ve_v3": [1.0], "type_display": "Threshold Test",
     }
     r = extract_activity_insights({}, activity, PROFILE)
     assert r["truncated_test"] is True
@@ -226,7 +238,10 @@ def test_truncated_test_flagged():
 
 def test_regular_ride_no_breakpoints_but_has_thresholds():
     wzd = {"thresholds_zone": {"VT1": {"HR": 150.0, "VE": 78.89, "confidence": "medium"}}}
-    activity = {"id": "r", "sport": "2", "new_zone_vt1": "", "new_zone_vt2": "", "new_zone_vo2max": ""}
+    activity = {
+        "id": "r", "sport": "2", "type_display": "Normal Activity",
+        "new_zone_vt1": "", "new_zone_vt2": "", "new_zone_vo2max": "",
+    }
     r = extract_activity_insights(wzd, activity, PROFILE)
     assert r["thresholds"]["VT1"]["confidence"] == "medium"
     assert r["thresholds"]["VT1"]["steady_state_power_w"] is None
@@ -245,6 +260,63 @@ def test_regular_ride_no_breakpoints_but_has_thresholds():
     }
     assert r["ve_curve_available"] is False
     assert r["truncated_test"] is False
+
+
+def test_normal_activity_with_ve_samples_still_uses_normal_activity_reason():
+    activity = {
+        "id": "normal-with-ve",
+        "type": "0",
+        "predict_ve_v3": [55.0, 56.0],
+        "new_zone_vt1": "",
+        "new_zone_vt2": "",
+        "new_zone_vo2max": "",
+        "new_zone_fatmax": "",
+    }
+
+    r = extract_activity_insights({}, activity, PROFILE)
+
+    assert r["ve_curve_available"] is True
+    for name in ("vt1", "vt2", "vo2max", "fatmax"):
+        assert r["breakpoints"][name]["availability"]["reason"] == "normal_activity"
+    assert r["truncated_test"] is False
+
+
+def test_declared_test_without_samples_or_detections_uses_threshold_not_detected_reason():
+    activity = {
+        "id": "empty-test",
+        "type_display": "Bike Threshold Test",
+        "predict_ve_v3": [],
+        "new_zone_vt1": "",
+        "new_zone_vt2": "",
+        "new_zone_vo2max": "",
+        "new_zone_fatmax": "",
+    }
+
+    r = extract_activity_insights({}, activity, PROFILE)
+
+    assert r["ve_curve_available"] is False
+    for name in ("vt1", "vt2", "vo2max", "fatmax"):
+        assert r["breakpoints"][name]["availability"]["reason"] == "threshold_not_detected"
+
+
+def test_unknown_activity_type_does_not_guess_from_empty_arrays():
+    activity = {
+        "id": "unknown",
+        "predict_ve_v3": [],
+        "new_zone_vt1": "",
+        "new_zone_vt2": "",
+        "new_zone_vo2max": "",
+        "new_zone_fatmax": "",
+    }
+
+    r = extract_activity_insights({}, activity, PROFILE)
+
+    for name in ("vt1", "vt2", "vo2max", "fatmax"):
+        assert r["breakpoints"][name]["availability"] == {
+            "state": "not_computed",
+            "reason": "activity_type_unknown",
+            "source": f"activity.new_zone_{name}",
+        }
 
 
 def test_power_at_threshold_windowed_mean():
