@@ -90,18 +90,18 @@ The same targeted command passed after the minimal fixes: `3 passed in 0.03s`.
 An added camel-case `gpsLatitude` mutation then failed by leaking the developer
 coordinate and passed after identifier normalization.
 
-Final Task 3 focused suite: `32 passed in 0.08s`.
+Final Task 3 focused suite after review fixes: `34 passed in 0.12s`.
 
 ## Verification
 
 - Relevant compatibility tests:
   `uv run pytest tests/test_tools/test_fit_timeseries.py tests/test_tools/test_exports.py tests/test_client/test_http.py -q`:
-  `54 passed in 0.48s`.
+  `56 passed in 0.46s`.
 - Scoped Ruff: `All checks passed!`.
 - Scoped mypy: `Success: no issues found in 3 source files`.
 - Full suite, run once after focused checks:
   `PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider -q`:
-  `404 passed in 4.59s`.
+  `406 passed in 5.11s`.
 
 ## Self-review
 
@@ -138,3 +138,42 @@ Final Task 3 focused suite: `32 passed in 0.08s`.
 - Lock regeneration also reconciled the already-declared `pyjwt[crypto]`
   metadata and the current `exceptiongroup` marker. No unrelated package
   version changed.
+
+## Review fix 2: contain Garmin decoder exceptions
+
+The review found that the Garmin SDK boundary assumed `Decoder.read()` would
+always return its warning list. An unexpected decoder exception could instead
+escape the tool and expose its raw message, including a private path or signed
+query string.
+
+The decoder construction, FIT identification, and read operations now share one
+stable exception boundary. Failures return
+`unavailable/fit_decode_failed`, empty data, and only the exception type in
+`decoder_warnings`. Payload validation and gzip/size errors remain outside this
+boundary and preserve their existing input-validation behavior.
+
+### RED
+
+Command:
+
+`uv run pytest tests/test_tools/test_fit_timeseries.py::TestDecodeFitTimeseries::test_decoder_read_exception_returns_safe_unavailable_capability tests/test_tools/test_fit_timeseries.py::TestDecodeFitTimeseries::test_decoder_is_fit_exception_uses_same_safe_boundary -q`
+
+Result: `2 failed in 0.10s`. Both SDK exceptions escaped, and pytest displayed
+the injected private path/URL and query secret.
+
+### GREEN
+
+The exact two regressions plus malformed and valid-empty FIT guards passed:
+`4 passed in 0.05s`.
+
+Final review-fix verification:
+
+- Relevant compatibility tests: `56 passed in 0.46s`.
+- Scoped Ruff: `All checks passed!`.
+- Scoped mypy: `Success: no issues found in 1 source file`.
+- Task 3 focused suite: `34 passed in 0.12s`.
+- Full suite: `406 passed in 5.11s`.
+
+Mutation check: removing the exception boundary from either `is_fit()` or
+`read()` makes a focused regression fail. Returning `str(exc)` or raw exception
+detail fails the path, URL, query-key, and secret-leak assertions.

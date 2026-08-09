@@ -454,6 +454,68 @@ class TestDecodeFitTimeseries:
         }
         assert result["data"] == []
 
+    def test_decoder_read_exception_returns_safe_unavailable_capability(self, monkeypatch):
+        mod = _fit_timeseries_module()
+        decode = getattr(mod, "decode_fit_timeseries", None)
+        assert decode is not None
+
+        class RaisingDecoder:
+            def __init__(self, stream):
+                self.stream = stream
+
+            def is_fit(self):
+                return True
+
+            def read(self):
+                raise RuntimeError("/private/leak.fit?X-Amz-Signature=secret")
+
+        monkeypatch.setattr(mod, "Decoder", RaisingDecoder)
+
+        try:
+            result = decode(b"decoder-fixture")
+        except RuntimeError:
+            pytest.fail("decoder exception escaped the stable FIT capability boundary")
+
+        assert result["available"] is False
+        assert result["availability"] == {
+            "state": "unavailable",
+            "reason": "fit_decode_failed",
+            "source": "fit_export",
+        }
+        assert result["decoder_warnings"] == [{"type": "RuntimeError"}]
+        assert result["data"] == []
+        serialized = str(result)
+        assert "/private/leak.fit" not in serialized
+        assert "X-Amz-Signature" not in serialized
+        assert "secret" not in serialized
+        assert "decoder-fixture" not in serialized
+
+    def test_decoder_is_fit_exception_uses_same_safe_boundary(self, monkeypatch):
+        mod = _fit_timeseries_module()
+        decode = getattr(mod, "decode_fit_timeseries", None)
+        assert decode is not None
+
+        class RaisingDecoder:
+            def __init__(self, stream):
+                self.stream = stream
+
+            def is_fit(self):
+                raise RuntimeError("https://example.invalid/private.fit?token=secret")
+
+        monkeypatch.setattr(mod, "Decoder", RaisingDecoder)
+
+        try:
+            result = decode(b"decoder-fixture")
+        except RuntimeError:
+            pytest.fail("FIT identification exception escaped the stable capability boundary")
+
+        assert result["availability"]["state"] == "unavailable"
+        assert result["availability"]["reason"] == "fit_decode_failed"
+        assert result["decoder_warnings"] == [{"type": "RuntimeError"}]
+        assert result["data"] == []
+        assert "example.invalid" not in str(result)
+        assert "secret" not in str(result)
+
     def test_structurally_valid_fit_without_records_is_available(self):
         mod = _fit_timeseries_module()
         decode = getattr(mod, "decode_fit_timeseries", None)

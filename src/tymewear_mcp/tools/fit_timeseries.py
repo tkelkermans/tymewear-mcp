@@ -272,18 +272,16 @@ def decode_fit_timeseries(
     """Decode FIT bytes in memory with the official Garmin SDK."""
     _validate_paging(offset, limit)
     payload, compression = _fit_payload(fit_bytes)
-    decoder = Decoder(Stream.from_byte_array(bytearray(payload)))
-    if not decoder.is_fit():
-        return normalize_fit_messages(
-            {},
-            decoder_warnings=[],
-            offset=offset,
-            limit=limit,
-            include_location=include_location,
-            compression=compression,
-            valid_fit=False,
-        )
-    messages, warnings = decoder.read()
+    is_fit = False
+    messages: Any = {}
+    warnings: list[Exception] = []
+    try:
+        decoder = Decoder(Stream.from_byte_array(bytearray(payload)))
+        is_fit = decoder.is_fit()
+        if is_fit:
+            messages, warnings = decoder.read()
+    except Exception as exc:
+        warnings = [exc]
     return normalize_fit_messages(
         cast(dict[str, Any], messages),
         decoder_warnings=warnings,
@@ -291,4 +289,5 @@ def decode_fit_timeseries(
         limit=limit,
         include_location=include_location,
         compression=compression,
+        valid_fit=is_fit,
     )
