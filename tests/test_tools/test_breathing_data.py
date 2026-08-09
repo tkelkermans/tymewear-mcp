@@ -66,7 +66,7 @@ class TestGetProcessedData:
         assert result["data"] == SAMPLE_TIMESERIES
         assert result["total_records"] == 5
 
-    async def test_channel_inventory_reports_canonical_units_and_coverage(self):
+    async def test_channel_inventory_reports_units_counts_scale_and_coverage_percentage(self):
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(
             return_value=[
@@ -79,9 +79,30 @@ class TestGetProcessedData:
         result = await get_processed_data(mock_client, "abc-123", mode="summary")
 
         assert result["channels"] == {
-            "cadence": {"canonical_unit": "rpm", "samples": 1, "coverage": 0.5},
-            "hr": {"canonical_unit": "bpm", "samples": 2, "coverage": 1.0},
-            "ve": {"canonical_unit": "L/min", "samples": 1, "coverage": 0.5},
+            "cadence": {
+                "source_unit": "rpm",
+                "canonical_unit": "rpm",
+                "scale": 1,
+                "sample_count": 1,
+                "expected_count": 2,
+                "coverage_pct": 50.0,
+            },
+            "hr": {
+                "source_unit": "bpm",
+                "canonical_unit": "bpm",
+                "scale": 1,
+                "sample_count": 2,
+                "expected_count": 2,
+                "coverage_pct": 100.0,
+            },
+            "ve": {
+                "source_unit": "L/min",
+                "canonical_unit": "L/min",
+                "scale": 1,
+                "sample_count": 1,
+                "expected_count": 2,
+                "coverage_pct": 50.0,
+            },
         }
 
 

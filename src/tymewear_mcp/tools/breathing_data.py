@@ -47,14 +47,19 @@ def _normalize_records(data: Any) -> list[dict[str, Any]]:
 def _channel_inventory(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     channels = sorted({str(key) for record in records for key in record if key not in _ELAPSED_TIME_FIELDS})
     total = len(records)
-    return {
-        channel: {
-            "canonical_unit": _CANONICAL_UNITS.get(channel),
-            "samples": (samples := sum(record.get(channel) is not None for record in records)),
-            "coverage": round(samples / total, 4) if total else 0.0,
+    inventory: dict[str, dict[str, Any]] = {}
+    for channel in channels:
+        unit = _CANONICAL_UNITS.get(channel)
+        sample_count = sum(record.get(channel) is not None for record in records)
+        inventory[channel] = {
+            "source_unit": unit,
+            "canonical_unit": unit,
+            "scale": 1,
+            "sample_count": sample_count,
+            "expected_count": total,
+            "coverage_pct": round(sample_count / total * 100, 2) if total else 0.0,
         }
-        for channel in channels
-    }
+    return inventory
 
 
 def _available_payload(records: list[dict[str, Any]], *, source: str) -> dict[str, Any]:
