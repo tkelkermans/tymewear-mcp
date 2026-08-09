@@ -193,8 +193,16 @@ async def test_get_integration_health_normalizes_observed_august9_shape_without_
     assert result["error"]["present"] is False
 
 
-@pytest.mark.parametrize("checked_at", [float("nan"), float("inf"), float("-inf")])
-async def test_get_integration_health_rejects_nonfinite_numeric_check_time(checked_at: float) -> None:
+@pytest.mark.parametrize(
+    "checked_at",
+    [
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="positive_infinity"),
+        pytest.param(float("-inf"), id="negative_infinity"),
+        pytest.param(10**10000, id="huge_integer"),
+    ],
+)
+async def test_get_integration_health_rejects_nonfinite_numeric_check_time(checked_at: int | float) -> None:
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(
         return_value={
@@ -207,7 +215,10 @@ async def test_get_integration_health_rejects_nonfinite_numeric_check_time(check
     )
     mock_client.sanitize = lambda data: data
 
-    result = await get_integration_health(mock_client, "garmin")
+    try:
+        result = await get_integration_health(mock_client, "garmin")
+    except OverflowError:
+        pytest.fail("an extreme checked_at value escaped integration normalization")
 
     assert result["checked"] == {
         "availability": {
@@ -218,6 +229,35 @@ async def test_get_integration_health_rejects_nonfinite_numeric_check_time(check
     }
     assert "nan" not in repr(result).casefold()
     assert "inf" not in repr(result).casefold()
+
+
+async def test_get_integration_health_reports_conflicting_explicit_states() -> None:
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(
+        return_value={
+            "is_connected": True,
+            "connected": False,
+            "connection_state": "error",
+            "authenticated": True,
+            "auth_status": "expired",
+            "is_healthy": True,
+            "status": "failed",
+            "error": None,
+        }
+    )
+    mock_client.sanitize = lambda data: data
+
+    result = await get_integration_health(mock_client, "garmin")
+
+    assert result["availability"] == {
+        "state": "partial",
+        "reason": "current_snapshot_conflicting",
+        "source": "integration_health",
+    }
+    assert result["connection_state"] == "conflicting"
+    assert result["auth_state"] == "conflicting"
+    assert result["ingestion_state"] == "conflicting"
+    assert result["state_conflicts"] == ["auth_state", "connection_state", "ingestion_state"]
 
 
 async def test_get_integration_health_reports_current_error_without_raw_text_or_recovery_history() -> None:
@@ -265,7 +305,7 @@ async def test_get_integration_health_contains_nested_errors_and_malicious_check
             "checked_at": "https://example.test/private?token=secret",
             "error": {"detail": "nested /private/path?token=secret"},
             "last_error": ["another secret"],
-            "error_code": "TOKEN_secret_callback",
+            "error_code": "AKIAABCDEFGHIJKLMNOP",
         }
     )
     mock_client.sanitize = lambda data: data
@@ -290,22 +330,24 @@ async def test_get_integration_health_contains_nested_errors_and_malicious_check
     serialized = repr(result)
     assert "example.test" not in serialized
     assert "/private/path" not in serialized
-    assert "TOKEN_secret_callback" not in serialized
+    assert "AKIAABCDEFGHIJKLMNOP" not in serialized
     assert "another secret" not in serialized
 
 
-async def test_get_integration_health_keeps_omitted_current_fields_unknown() -> None:
+@pytest.mark.parametrize("payload", [{}, []])
+async def test_get_integration_health_rejects_malformed_success_payload(payload: object) -> None:
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value={})
+    mock_client.get = AsyncMock(return_value=payload)
     mock_client.sanitize = lambda data: data
 
     result = await get_integration_health(mock_client, "garmin")
 
     assert result["availability"] == {
-        "state": "partial",
-        "reason": "current_snapshot_incomplete",
+        "state": "unavailable",
+        "reason": "malformed_upstream_payload",
         "source": "integration_health",
     }
+    assert result["available"] is False
     assert result["connection_state"] == "unknown"
     assert result["auth_state"] == "unknown"
     assert result["ingestion_state"] == "unknown"

@@ -24,3 +24,13 @@
   separate WZD summary and breakpoint semantics, privacy-safe projections,
   and honest integration snapshots. Focused tests, scoped Ruff/mypy and the
   full 425-test suite passed. Awaiting review.
+- Task 4 review round 1 at `c132a7d`: needs stricter pre-I/O inputs,
+  canonical-unit conflict handling, centralized capability and JSON-safe value
+  normalization, optional capability semantics, bounded zone/provenance keys,
+  and malformed/conflicting integration-state handling. Fix base: `c132a7d`.
+- Task 4 review round 2 fixes complete: exact aggregate RED was 25 failed and
+  31 passed. Independent review found four additional important edge cases;
+  their focused RED was 4 failed and final re-review reported no unresolved
+  Critical or Important findings. Final focused tests are 62 passed, scoped
+  Ruff/mypy are clean, and the fresh full suite is 456 passed. Server/public
+  registration remains untouched for Task 5. Awaiting parent re-review.

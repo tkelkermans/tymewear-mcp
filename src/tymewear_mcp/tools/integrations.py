@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 from datetime import datetime
 from typing import Any
@@ -11,6 +10,30 @@ import httpx
 
 from tymewear_mcp.client.http import TymeClient
 from tymewear_mcp.tools._availability import AvailabilityState, availability_envelope, unavailable_from_http_error
+from tymewear_mcp.tools._safe_values import finite_number, safe_text
+
+_SAFE_ERROR_CODE_PARTS = frozenset(
+    {
+        "auth",
+        "connection",
+        "denied",
+        "error",
+        "expired",
+        "failed",
+        "forbidden",
+        "ingestion",
+        "invalid",
+        "limit",
+        "not",
+        "pending",
+        "rate",
+        "revoked",
+        "sync",
+        "timeout",
+        "unauthorized",
+        "unavailable",
+    }
+)
 
 
 def _available(data: Any) -> dict[str, Any]:
@@ -94,86 +117,103 @@ def _normalized_text_state(value: Any, mapping: dict[str, str]) -> str | None:
     return mapping.get(value.strip().casefold())
 
 
-def _connection_state(payload: dict[str, Any]) -> str:
-    for key in ("is_connected", "connected"):
-        explicit = _state_from_bool(payload, key, yes="connected", no="disconnected")
+def _resolved_state(
+    payload: dict[str, Any],
+    *,
+    bool_fields: tuple[tuple[str, str, str], ...],
+    text_fields: tuple[str, ...],
+    mapping: dict[str, str],
+) -> str:
+    """Resolve all recognized explicit state fields without precedence masking conflicts."""
+    reported: set[str] = set()
+    for key, yes, no in bool_fields:
+        explicit = _state_from_bool(payload, key, yes=yes, no=no)
         if explicit is not None:
-            return explicit
-    return _normalized_text_state(
-        payload.get("connection_state"),
-        {
+            reported.add(explicit)
+    for key in text_fields:
+        explicit = _normalized_text_state(payload.get(key), mapping)
+        if explicit is not None:
+            reported.add(explicit)
+    if len(reported) > 1:
+        return "conflicting"
+    return next(iter(reported), "unknown")
+
+
+def _connection_state(payload: dict[str, Any]) -> str:
+    return _resolved_state(
+        payload,
+        bool_fields=(
+            ("is_connected", "connected", "disconnected"),
+            ("connected", "connected", "disconnected"),
+        ),
+        text_fields=("connection_state",),
+        mapping={
             "connected": "connected",
             "disconnected": "disconnected",
             "connecting": "connecting",
             "error": "error",
             "failed": "error",
         },
-    ) or "unknown"
+    )
 
 
 def _auth_state(payload: dict[str, Any]) -> str:
-    for key in ("authenticated", "auth_valid", "token_valid"):
-        explicit = _state_from_bool(payload, key, yes="authenticated", no="unauthenticated")
-        if explicit is not None:
-            return explicit
-    for key in ("auth_state", "auth_status"):
-        explicit = _normalized_text_state(
-            payload.get(key),
-            {
-                "authenticated": "authenticated",
-                "valid": "authenticated",
-                "active": "authenticated",
-                "unauthenticated": "unauthenticated",
-                "invalid": "unauthenticated",
-                "expired": "expired",
-                "revoked": "revoked",
-                "error": "error",
-                "failed": "error",
-            },
-        )
-        if explicit is not None:
-            return explicit
-    return "unknown"
+    return _resolved_state(
+        payload,
+        bool_fields=tuple(
+            (key, "authenticated", "unauthenticated")
+            for key in ("authenticated", "auth_valid", "token_valid")
+        ),
+        text_fields=("auth_state", "auth_status"),
+        mapping={
+            "authenticated": "authenticated",
+            "valid": "authenticated",
+            "active": "authenticated",
+            "unauthenticated": "unauthenticated",
+            "invalid": "unauthenticated",
+            "expired": "expired",
+            "revoked": "revoked",
+            "error": "error",
+            "failed": "error",
+        },
+    )
 
 
 def _ingestion_state(payload: dict[str, Any]) -> str:
-    explicit = _state_from_bool(payload, "is_healthy", yes="healthy", no="error")
-    if explicit is not None:
-        return explicit
-    for key in ("ingestion_state", "ingestion_status", "sync_status", "status"):
-        explicit = _normalized_text_state(
-            payload.get(key),
-            {
-                "healthy": "healthy",
-                "ok": "healthy",
-                "active": "healthy",
-                "idle": "idle",
-                "pending": "sync_pending",
-                "syncing": "sync_pending",
-                "sync_pending": "sync_pending",
-                "error": "error",
-                "failed": "error",
-                "unhealthy": "error",
-            },
-        )
-        if explicit is not None:
-            return explicit
-    return "unknown"
+    return _resolved_state(
+        payload,
+        bool_fields=(("is_healthy", "healthy", "error"),),
+        text_fields=("ingestion_state", "ingestion_status", "sync_status", "status"),
+        mapping={
+            "healthy": "healthy",
+            "ok": "healthy",
+            "active": "healthy",
+            "idle": "idle",
+            "pending": "sync_pending",
+            "syncing": "sync_pending",
+            "sync_pending": "sync_pending",
+            "error": "error",
+            "failed": "error",
+            "unhealthy": "error",
+        },
+    )
 
 
 def _checked(payload: dict[str, Any]) -> dict[str, Any]:
     for key in ("checked_at", "last_checked_at", "last_check_at"):
         value = payload.get(key)
-        valid = (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(float(value))
-        )
+        numeric = finite_number(value)
+        valid = isinstance(numeric, (int, float))
         if isinstance(value, str):
             try:
-                parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+                checked_text = safe_text(value, max_length=40)
+                if checked_text is None:
+                    raise ValueError
+                parsed = datetime.fromisoformat(
+                    checked_text[:-1] + "+00:00" if checked_text.endswith("Z") else checked_text
+                )
                 valid = parsed.tzinfo is not None
-            except ValueError:
+            except (OverflowError, ValueError):
                 valid = False
         if valid:
             return {
@@ -215,7 +255,7 @@ def _safe_error_code(value: Any) -> str | None:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Z][A-Z0-9_.-]{0,63}", value):
         return None
     parts = frozenset(part for part in re.split(r"[^a-z0-9]+", value.casefold()) if part)
-    if parts & {"callback", "credential", "password", "secret", "token"}:
+    if not parts or not parts <= _SAFE_ERROR_CODE_PARTS:
         return None
     return value
 
@@ -254,19 +294,30 @@ def _integration_snapshot(
     connection_state = _connection_state(payload)
     auth_state = _auth_state(payload)
     ingestion_state = _ingestion_state(payload)
+    state_conflicts = sorted(
+        name
+        for name, value in {
+            "connection_state": connection_state,
+            "auth_state": auth_state,
+            "ingestion_state": ingestion_state,
+        }.items()
+        if value == "conflicting"
+    )
     checked = _checked(payload)
     error = _current_error(payload)
     incomplete = "unknown" in {connection_state, auth_state, ingestion_state}
     error_present = error.get("present") is True
-    state: AvailabilityState = "partial" if incomplete or error_present else "available"
+    state: AvailabilityState = "partial" if state_conflicts or incomplete or error_present else "available"
     reason = (
-        "current_snapshot_incomplete"
+        "current_snapshot_conflicting"
+        if state_conflicts
+        else "current_snapshot_incomplete"
         if incomplete
         else "current_snapshot_reports_error"
         if error_present
         else "current_snapshot_available"
     )
-    return {
+    result = {
         **availability_envelope(state=state, reason=reason, source="integration_health"),
         "integration_id": integration_id,
         "connection_state": connection_state,
@@ -276,6 +327,9 @@ def _integration_snapshot(
         "error": error,
         "capabilities": _operational_capabilities(),
     }
+    if state_conflicts:
+        result["state_conflicts"] = state_conflicts
+    return result
 
 
 def _failed_integration_snapshot(
@@ -318,6 +372,10 @@ async def get_integration_health(client: TymeClient, integration_id: str) -> dic
         return _failed_integration_snapshot(integration_id, reason=reason, status_code=status_code)
     except Exception:
         return _failed_integration_snapshot(integration_id, reason="integration_health_request_failed")
-    sanitized = client.sanitize(data)
-    payload = sanitized if isinstance(sanitized, dict) else {}
-    return _integration_snapshot(integration_id, payload)
+    try:
+        sanitized = client.sanitize(data)
+    except Exception:
+        return _failed_integration_snapshot(integration_id, reason="malformed_upstream_payload")
+    if not isinstance(sanitized, dict) or not sanitized:
+        return _failed_integration_snapshot(integration_id, reason="malformed_upstream_payload")
+    return _integration_snapshot(integration_id, sanitized)

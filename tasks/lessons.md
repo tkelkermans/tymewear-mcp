@@ -11,3 +11,8 @@
 - Prefer evidenced live integration field names over synthetic examples. Garmin
   health reports `is_connected` and `is_healthy`; these current booleans do not
   prove authentication or any historical recovery state.
+- Validate composition inputs before creating any upstream coroutine, normalize
+  capability envelopes once for both metadata and payload usability, and apply
+  the same bounded JSON-safe scalar/name/unit policy to values and nested
+  provenance. Optional capability gaps must not automatically downgrade the
+  whole analysis.

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+import pytest
 from garmin_fit_sdk import Encoder
 
 from tymewear_mcp.client.http import TymeClient
@@ -139,6 +141,36 @@ async def _analyze(client: ReadOnlyClient, **kwargs: Any) -> dict[str, Any]:
     return await analyze(client, ACTIVITY_ID, **kwargs)
 
 
+@pytest.mark.parametrize("include_location", ["false", 1, []])
+async def test_include_location_requires_a_literal_bool_before_io(include_location: Any) -> None:
+    client = ReadOnlyClient()
+
+    with pytest.raises(ValueError, match="include_location must be a boolean"):
+        await _analyze(client, include_location=include_location)
+
+    assert client.read_paths == []
+    assert client.fit_reads == []
+
+
+@pytest.mark.parametrize(
+    "channels",
+    [
+        [],
+        ["!!!"],
+        ["x" * 65],
+        [f"channel_{index}" for index in range(33)],
+    ],
+)
+async def test_channel_filters_are_normalized_and_bounded_before_io(channels: list[str]) -> None:
+    client = ReadOnlyClient()
+
+    with pytest.raises(ValueError, match="channels"):
+        await _analyze(client, channels=channels)
+
+    assert client.read_paths == []
+    assert client.fit_reads == []
+
+
 async def test_selects_each_channel_and_null_sample_independently_by_source_priority() -> None:
     started_at = datetime(2026, 8, 9, 10, 31, 35, tzinfo=timezone.utc)
     client = ReadOnlyClient(
@@ -188,6 +220,212 @@ async def test_selects_each_channel_and_null_sample_independently_by_source_prio
     assert result["channels"]["cadence"]["availability"]["state"] == "available"
 
 
+def test_incompatible_units_are_not_silently_merged() -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+    raw_samples, channels = module._merge_sources(
+        {
+            "processed_data": {
+                "data": [{"time": 0, "ve": 40.0}],
+                "channels": {"ve": {"source_unit": "L/min", "canonical_unit": "L/min", "scale": 1}},
+            },
+            "new_processed_data": {
+                "data": [{"time": 1, "ve": 40000.0}],
+                "channels": {"ve": {"source_unit": "mL/min", "canonical_unit": None, "scale": None}},
+            },
+            "fit_export": {"data": [], "channels": {}},
+        },
+        duration_seconds=2,
+        requested_channels=["ventilation"],
+        include_location=False,
+        offset=0,
+        limit=500,
+    )
+
+    assert raw_samples["data"] == [{"elapsed_seconds": 0, "ventilation": 40.0}]
+    assert channels["ventilation"]["availability"] == {
+        "state": "partial",
+        "reason": "unit_conflict",
+        "source": "processed_data",
+    }
+    assert channels["ventilation"]["rejected_unit_sample_count"] == 1
+
+
+def test_unverified_custom_unit_channel_is_not_exposed_as_available() -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+    raw_samples, channels = module._merge_sources(
+        {
+            "processed_data": {
+                "data": [{"time": 0, "custom_metric": 42.0}],
+                "channels": {
+                    "custom_metric": {
+                        "source_unit": "mL/min",
+                        "canonical_unit": None,
+                        "scale": None,
+                    }
+                },
+            },
+            "new_processed_data": {"data": [], "channels": {}},
+            "fit_export": {"data": [], "channels": {}},
+        },
+        duration_seconds=1,
+        requested_channels=["custom_metric"],
+        include_location=False,
+        offset=0,
+        limit=500,
+    )
+
+    assert raw_samples["data"] == []
+    assert channels["custom_metric"]["availability"]["reason"] == "unit_conflict"
+    assert channels["custom_metric"]["rejected_unit_sample_count"] == 1
+
+
+def test_fit_source_unit_spelling_is_retained_after_verified_canonicalization() -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+    raw_samples, channels = module._merge_sources(
+        {
+            "processed_data": {"data": [], "channels": {}},
+            "new_processed_data": {"data": [], "channels": {}},
+            "fit_export": {
+                "data": [{"elapsed_seconds": 0, "tyme_minute_volume": 42.0}],
+                "channels": {
+                    "tyme_minute_volume": {
+                        "source_unit": "l/min",
+                        "canonical_unit": "L/min",
+                        "scale": 1,
+                    }
+                },
+            },
+        },
+        duration_seconds=1,
+        requested_channels=["ventilation"],
+        include_location=False,
+        offset=0,
+        limit=500,
+    )
+
+    assert raw_samples["data"] == [{"elapsed_seconds": 0, "ventilation": 42.0}]
+    assert channels["ventilation"]["source_unit"] == "l/min"
+    assert channels["ventilation"]["canonical_unit"] == "L/min"
+    assert channels["ventilation"]["scale"] == 1
+    assert channels["ventilation"]["availability"]["state"] == "available"
+
+
+@pytest.mark.parametrize(
+    "unsafe_scale",
+    [pytest.param(float("inf"), id="infinity"), pytest.param(10**10000, id="huge_integer")],
+)
+def test_unsafe_unit_metadata_and_nonfinite_scale_are_contained(unsafe_scale: int | float) -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+    _, channels = module._merge_sources(
+        {
+            "processed_data": {
+                "data": [{"time": 0, "hr": 140}],
+                "channels": {
+                    "hr": {
+                        "source_unit": "https://example.test/token\nsecret",
+                        "canonical_unit": "/private/tmp/unit",
+                        "scale": unsafe_scale,
+                    }
+                },
+            },
+            "new_processed_data": {"data": [], "channels": {}},
+            "fit_export": {"data": [], "channels": {}},
+        },
+        duration_seconds=1,
+        requested_channels=["heart_rate"],
+        include_location=False,
+        offset=0,
+        limit=500,
+    )
+
+    metadata = channels["heart_rate"]
+    assert metadata["source_unit"] is None
+    assert metadata["canonical_unit"] == "bpm"
+    assert metadata["scale"] is None
+    assert metadata["availability"]["state"] == "partial"
+    assert metadata["availability"]["reason"] == "unsafe_unit_metadata"
+    json.dumps(metadata, allow_nan=False)
+    serialized = repr(metadata)
+    assert "example.test" not in serialized
+    assert "/private/tmp" not in serialized
+    assert "secret" not in serialized
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {
+            "available": True,
+            "availability": {"state": "unavailable", "reason": "not_available", "source": "upstream"},
+        },
+        {
+            "available": False,
+            "availability": {"state": "available", "reason": "data_available", "source": "upstream"},
+        },
+    ],
+)
+def test_malformed_or_contradictory_capability_payload_is_unavailable(payload: dict[str, Any]) -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+
+    assert module._capability(payload, source="processed_data", failure_reason="request_failed") == {
+        "state": "unavailable",
+        "reason": "malformed_upstream_payload",
+        "source": "processed_data",
+    }
+    assert module._usable_dict(payload) == {}
+
+
+def test_valid_available_empty_series_remains_usable_without_channels() -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+    payload = {
+        "available": True,
+        "availability": {"state": "available", "reason": "data_available", "source": "processed_data"},
+        "data": [],
+        "channels": {},
+    }
+
+    assert module._capability(payload, source="processed_data", failure_reason="request_failed")["state"] == "available"
+    assert module._usable_dict(payload) == payload
+
+
+async def test_malformed_available_series_payloads_are_not_reported_green(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+
+    async def missing_series(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"available": True}
+
+    async def wrong_series(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "available": True,
+            "availability": {
+                "state": "available",
+                "reason": "data_available",
+                "source": "fit_export",
+            },
+            "data": "not-a-series",
+            "channels": {},
+        }
+
+    monkeypatch.setattr(module, "get_processed_data", missing_series)
+    monkeypatch.setattr(module, "_decode_complete_fit", wrong_series)
+
+    result = await _analyze(ReadOnlyClient())
+
+    assert result["capabilities"]["processed_data"] == {
+        "state": "unavailable",
+        "reason": "malformed_upstream_payload",
+        "source": "processed_data",
+    }
+    assert result["capabilities"]["fit_export"] == {
+        "state": "unavailable",
+        "reason": "malformed_upstream_payload",
+        "source": "fit_export",
+    }
+
+
 async def test_fit_only_analysis_remains_available_when_processed_sources_are_missing() -> None:
     started_at = datetime(2026, 8, 9, 10, 31, 35, tzinfo=timezone.utc)
     client = ReadOnlyClient(
@@ -229,6 +467,17 @@ async def test_wzd_summary_stays_available_without_processed_fit_or_raw_zone_lab
     assert "zone_label" not in result["channels"]
 
 
+async def test_optional_raw_zone_labels_do_not_force_top_level_partial() -> None:
+    result = await _analyze(ReadOnlyClient())
+
+    assert result["capabilities"]["raw_zone_labels"]["state"] == "not_computed"
+    assert result["availability"] == {
+        "state": "available",
+        "reason": "analysis_available",
+        "source": "activity_analysis",
+    }
+
+
 def test_wzd_times_zone_is_elapsed_axis_not_raw_zone_labels() -> None:
     module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
 
@@ -237,6 +486,17 @@ def test_wzd_times_zone_is_elapsed_axis_not_raw_zone_labels() -> None:
     assert result == {
         "state": "not_computed",
         "reason": "raw_zone_labels_not_reported",
+        "source": "workout_zone_detection",
+    }
+
+
+async def test_raw_zone_label_reason_reflects_unavailable_wzd_source() -> None:
+    result = await _analyze(ReadOnlyClient(wzd=_http_error(404)))
+
+    assert result["capabilities"]["workout_zone_detection"]["state"] == "unavailable"
+    assert result["capabilities"]["raw_zone_labels"] == {
+        "state": "unavailable",
+        "reason": "workout_zone_detection_unavailable",
         "source": "workout_zone_detection",
     }
 
@@ -335,6 +595,43 @@ async def test_paginates_sorted_observed_union_after_merge_and_reports_filtered_
     assert "75609" not in str(result["raw_samples"]["data"])
 
 
+async def test_coverage_is_capped_and_tolerated_tail_samples_are_counted() -> None:
+    client = ReadOnlyClient(
+        activity=_activity(duration_seconds=3),
+        processed=[{"time": second, "ve": 40.0 + second} for second in range(5)],
+        new_processed=[],
+        fit=_fit_bytes([]),
+    )
+
+    result = await _analyze(client, channels=["ventilation"])
+
+    metadata = result["channels"]["ventilation"]
+    assert metadata["sample_count"] == 5
+    assert metadata["expected_count"] == 3
+    assert metadata["coverage_pct"] == 100.0
+    assert metadata["accepted_tail_count"] == 2
+
+
+async def test_tolerated_tail_samples_do_not_fill_expected_duration_gaps() -> None:
+    result = await _analyze(
+        ReadOnlyClient(
+            activity=_activity(duration_seconds=2),
+            processed=[{"time": 2, "ve": 42.0}, {"time": 3, "ve": 43.0}],
+            new_processed=[],
+            fit=_fit_bytes([]),
+        ),
+        channels=["ventilation"],
+    )
+
+    metadata = result["channels"]["ventilation"]
+    assert metadata["sample_count"] == 2
+    assert metadata["accepted_tail_count"] == 2
+    assert metadata["coverage_pct"] == 0.0
+    assert metadata["availability"]["state"] == "partial"
+    assert metadata["availability"]["reason"] == "channel_samples_have_gaps"
+    assert result["raw_samples"]["timeline"]["missing_expected_count"] == 2
+
+
 async def test_same_source_same_second_collision_is_deterministic() -> None:
     client = ReadOnlyClient(
         processed=[
@@ -401,6 +698,62 @@ async def test_location_requires_opt_in_and_never_exposes_nonanalytic_sensitive_
         assert private_value not in serialized
 
 
+@pytest.mark.parametrize("bad_duration", [-1, float("nan"), "2"])
+def test_invalid_zone_durations_have_stable_not_computed_capability(bad_duration: Any) -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+
+    result = module._zone_reconciliation(
+        {"Duration [sec]": {"Total": 3.0, "Zone 1": bad_duration}},
+        3.0,
+    )
+
+    assert result["availability"] == {
+        "state": "not_computed",
+        "reason": "invalid_zone_durations",
+        "source": "workout_zone_detection",
+    }
+    assert result["within_tolerance"] is None
+    json.dumps(result, allow_nan=False)
+
+
+def test_zone_derived_totals_must_remain_within_json_safe_numeric_bound() -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+    safe_individual = 9_000_000_000_000_000
+
+    result = module._zone_reconciliation(
+        {
+            "Duration [sec]": {
+                "Total": safe_individual,
+                "Zone 1": safe_individual,
+                "Zone 2": safe_individual,
+            }
+        },
+        safe_individual,
+    )
+
+    assert result["availability"] == {
+        "state": "not_computed",
+        "reason": "invalid_zone_durations",
+        "source": "workout_zone_detection",
+    }
+    assert result["within_tolerance"] is None
+    json.dumps(result, allow_nan=False)
+
+
+async def test_unproven_processed_zone_fields_are_not_exposed_as_raw_channels() -> None:
+    result = await _analyze(
+        ReadOnlyClient(
+            processed=[{"time": 0, "ve": 40.0, "zone": 2, "zone_label": 2}],
+            new_processed=[],
+            fit=_fit_bytes([]),
+        )
+    )
+
+    assert "zone" not in result["channels"]
+    assert "zone_label" not in result["channels"]
+    assert result["capabilities"]["raw_zone_labels"]["state"] == "not_computed"
+
+
 async def test_august9_timestamps_and_zone_seconds_reconcile_with_inclusive_tolerance() -> None:
     activity = _activity(duration_seconds=3231)
     wzd = _wzd()
@@ -430,6 +783,85 @@ async def test_august9_timestamps_and_zone_seconds_reconcile_with_inclusive_tole
         "comparison": "absolute_delta_lte",
         "within_tolerance": True,
     }
+
+
+async def test_extreme_and_nonfinite_numerics_are_isolated_and_result_is_strict_json() -> None:
+    huge = 10**10000
+    activity = {
+        **_activity(duration_seconds=3),
+        "duration_seconds": float("nan"),
+        "kcal_expenditure": float("inf"),
+        "unix_timestamp": huge,
+        "tz_offset": huge,
+        "new_zone_vt1": "00:01",
+        "new_zone_vt1_metrics": [None] * 12 + [huge] + [None] * 11 + [huge],
+        "_omitted_fields": {"ext_hr": {"length": huge}},
+    }
+    profile = {**_profile(), "bike_ve_target_vt1": float("nan")}
+    wzd = _wzd()
+    wzd["thresholds_zone"]["VT1"]["VE"] = float("inf")
+    wzd["zone_summary_table"] = {"Duration [sec]": {"Total": 3.0, "Zone 1": float("nan")}}
+    client = ReadOnlyClient(
+        activity=activity,
+        profile=profile,
+        wzd=wzd,
+        processed=[
+            {"time": huge, "ve": 99.0},
+            {"time": 0, "ve": float("nan")},
+            {"time": 1, "hr": 140},
+        ],
+        new_processed=[],
+        fit=_fit_bytes([]),
+    )
+
+    try:
+        result = await _analyze(client)
+    except OverflowError:
+        pytest.fail("one extreme numeric aborted the complete analysis")
+
+    assert result["raw_samples"]["data"] == [{"elapsed_seconds": 1, "heart_rate": 140}]
+    assert "duration_seconds" not in result["identity"]
+    assert result["summary"]["raw_channel_completeness"]["channels"]["heart_rate"] == {
+        "state": "unknown",
+        "sample_count": None,
+        "source_path": "activity.ext_hr",
+        "method": "not_reported",
+    }
+    json.dumps(result, allow_nan=False)
+
+
+async def test_source_controlled_names_are_bounded_and_sanitized_recursively() -> None:
+    oversized = "x" * 300
+    email_key = "athlete@example.test"
+    wzd = _wzd()
+    wzd["thresholds_zone"]["_quality"]["per_threshold_confidence"] = {
+        "VT1": "high",
+        email_key: "high",
+        oversized: "high",
+    }
+    wzd["zone_summary_table"] = {
+        "Duration [sec]": {
+            "Total": 3.0,
+            "Zone 1": 3.0,
+            f"Zone {email_key}": 1.0,
+            f"Zone {oversized}": 1.0,
+        }
+    }
+    result = await _analyze(
+        ReadOnlyClient(
+            wzd=wzd,
+            processed=[{"time": 0, "ve": 40.0, email_key: 1, oversized: 2}],
+            new_processed=[],
+            fit=_fit_bytes([]),
+        )
+    )
+
+    serialized = repr(result)
+    assert email_key not in serialized
+    assert oversized not in serialized
+    assert set(result["channels"]) == {"ventilation"}
+    assert set(result["summary"]["model_quality"]["per_threshold_confidence"]) == {"VT1"}
+    assert set(result["summary"]["zones"]["reported"]) == {"Zone 1"}
 
 
 async def test_upstream_failures_are_isolated_and_raw_errors_are_not_returned() -> None:

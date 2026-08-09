@@ -19,3 +19,27 @@
 - Full suite: 425 passed.
 - `tw_get_activity_analysis` remains absent from server/public registration as
   required until Task 5.
+
+## Review fix 2
+
+- [x] Add aggregate RED coverage for strict input validation and pre-I/O failure.
+- [x] Add unit sanitization/conflict and finite-scale coverage.
+- [x] Add capability contradiction/malformed/empty-series coverage.
+- [x] Define required versus optional top-level availability.
+- [x] Bound coverage and label accepted duration-tail samples.
+- [x] Reject malformed zone durations and raw zone-like processed channels.
+- [x] Make every numeric and nested metadata projection JSON-safe.
+- [x] Add bounded channel names/count and provenance/zone/confidence keys.
+- [x] Distinguish raw-zone-label reasons by WZD capability.
+- [x] Report conflicting explicit integration state fields.
+- [x] Run focused GREEN, scoped static checks, compatibility and full suite.
+- [x] Update report/ledger and create a separate unsigned review-fix commit.
+
+### Review-fix verification
+
+- Aggregate RED: 25 failed, 31 passed.
+- Independent-review RED: 4 failed; re-review: Ready with no findings.
+- Final focused GREEN: 62 passed.
+- Scoped Ruff and mypy: clean.
+- Fresh full suite: 456 passed.
+- Task 5 server/public registration: untouched.
