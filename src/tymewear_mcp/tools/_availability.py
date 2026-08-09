@@ -2,40 +2,74 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
+AvailabilityState = Literal[
+    "available",
+    "partial",
+    "not_applicable",
+    "not_computed",
+    "sync_pending",
+    "unavailable",
+    "permission_denied",
+]
 
-def feature_unavailable(reason: str, status_code: int, detail: str) -> dict[str, Any]:
-    return {
-        "available": False,
+
+def availability_envelope(
+    *,
+    state: AvailabilityState,
+    reason: str,
+    source: str,
+    http_status: int | None = None,
+) -> dict[str, Any]:
+    availability: dict[str, Any] = {
+        "state": state,
         "reason": reason,
-        "status_code": status_code,
-        "detail": detail,
+        "source": source,
+    }
+    if http_status is not None:
+        availability["http_status"] = http_status
+    return {
+        "availability": availability,
+        "available": state in {"available", "partial"},
     }
 
 
-def _response_detail(response: httpx.Response) -> str:
-    try:
-        data = response.json()
-    except ValueError:
-        return response.text or response.reason_phrase
-    if isinstance(data, dict):
-        detail = data.get("detail") or data.get("error") or data.get("message")
-        if detail is not None:
-            return str(detail)
-    return response.reason_phrase
+def feature_available(*, source: str) -> dict[str, Any]:
+    return availability_envelope(state="available", reason="data_available", source=source)
+
+
+def feature_unavailable(
+    reason: str,
+    status_code: int,
+    detail: str | None = None,
+    *,
+    source: str = "tymewear_api",
+) -> dict[str, Any]:
+    state: AvailabilityState = "permission_denied" if status_code == 403 else "unavailable"
+    return {
+        **availability_envelope(
+            state=state,
+            reason=reason,
+            source=source,
+            http_status=status_code,
+        ),
+        "reason": reason,
+        "status_code": status_code,
+    }
 
 
 def unavailable_from_http_error(
     error: httpx.HTTPStatusError,
     *,
     default_reason: str = "feature_not_available",
+    source: str = "tymewear_api",
 ) -> dict[str, Any]:
     status_code = error.response.status_code
     return feature_unavailable(
         reason=default_reason,
         status_code=status_code,
-        detail=_response_detail(error.response),
+        source=source,
     )

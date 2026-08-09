@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import unquote
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 PATH_DELIMITERS = frozenset("/\\?#")
 
@@ -90,8 +90,19 @@ class GetProcessedDataInput(ActivityIdMixin):
         default="summary",
         description="summary=aggregated stats, window=raw data for time range, full=all records",
     )
-    window_start: int | None = Field(default=None, description="Start second for window mode")
-    window_end: int | None = Field(default=None, description="End second for window mode")
+    window_start: int | None = Field(default=None, ge=0, description="Inclusive start second for window mode")
+    window_end: int | None = Field(default=None, ge=0, description="Inclusive end second for window mode")
+
+    @model_validator(mode="after")
+    def validate_window_bounds(self) -> GetProcessedDataInput:
+        if self.mode == "window":
+            if self.window_start is None or self.window_end is None:
+                raise ValueError("window mode requires both window_start and window_end")
+            if self.window_end < self.window_start:
+                raise ValueError("window_end must be greater than or equal to window_start")
+        elif self.window_start is not None or self.window_end is not None:
+            raise ValueError("window_start and window_end are only valid in window mode")
+        return self
 
 
 class TagThresholdInput(ActivityIdMixin):
