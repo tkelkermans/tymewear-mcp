@@ -33,13 +33,18 @@ def _metrics(instant, hr, rounded, precise):
 
 TEST_ACTIVITY = {
     "id": "e4", "name": "Ramp", "sport": "2", "sport_display": "Bike", "data_type": "tyme-wear",
-    "duration": "53:48", "time_stamp": "2026-06-17T15:47:12Z", "unix_timestamp": 1781704032,
+    "duration": "53:48", "duration_seconds": 3228, "kcal_expenditure": 644.0,
+    "time_stamp": "2026-06-17T15:47:12Z", "unix_timestamp": 1781704032,
+    "tz_name": "CEST", "tz_offset": "2.0",
     "new_zone_fitness_level": "Elite",
     "new_zone_vt1": "37:27", "new_zone_vt2": "44:34", "new_zone_vo2max": "52:23", "new_zone_fatmax": "30:41",
     "new_zone_vt1_metrics": _metrics("236", "151", "250.0", "249.6"),
     "new_zone_vt2_metrics": _metrics("290", "162", "290.0", "289.6"),
     "new_zone_vo2max_metrics": _metrics("335", "172", "350.0", "349.2"),
     "predict_ve_v3": [57.0, 58.0],
+    "predict_time_v3": [0.0, 1.0],
+    "ext_hr": [150.0, 151.0, 152.0],
+    "ext_bike_power": [],
 }
 
 
@@ -53,21 +58,150 @@ def test_mmss():
 def test_insights_complete_test():
     r = extract_activity_insights(WZD, TEST_ACTIVITY, PROFILE)
     # labeled thresholds from workout-zone-detection
-    assert r["thresholds"]["VT1"] == {"ve": 60.68, "hr": 131.0, "confidence": "high", "steady_state_power_w": 132.9}
+    assert r["thresholds"]["VT1"]["ve"] == 60.68
+    assert r["thresholds"]["VT1"]["hr"] == 131.0
+    assert r["thresholds"]["VT1"]["confidence"] == "high"
+    assert r["thresholds"]["VT1"]["steady_state_power_w"] == 132.9
     assert r["thresholds"]["VT2"]["ve"] == 113.32
     # detected breakpoints + displayed power from activity metrics (tests only)
     assert r["detected_breakpoints"]["vt1"]["time_seconds"] == 2247
     assert r["detected_breakpoints"]["vt1"]["displayed_power_w"] == 250.0
     assert r["detected_breakpoints"]["vt1"]["instant_power_w"] == 236.0
     assert r["detected_breakpoints"]["vt2"]["displayed_power_w"] == 290.0
+    assert r["breakpoints"]["vt1"]["availability"] == {
+        "state": "available",
+        "reason": "threshold_detected",
+        "source": "activity.new_zone_vt1",
+    }
     # context
     assert r["ve_targets"]["vt2"] == 114.0
     assert r["fitness_level"] == "Elite"
     assert r["truncated_test"] is False
     assert r["quality"]["fit_r2"] == 0.965
     assert r["zone_summary"]["Duration [sec]"]["Total"] == 3231.0
-    assert r["started_at"] == "2026-06-17T15:47:12Z"
+    assert r["started_at"] == "2026-06-17T13:47:12Z"
+    assert r["timestamps"] == {
+        "utc": "2026-06-17T13:47:12Z",
+        "local": "2026-06-17T15:47:12+02:00",
+        "source": "2026-06-17T15:47:12Z",
+        "tz_name": "CEST",
+        "offset_minutes": 120,
+        "consistency": {"state": "conflict", "delta_seconds": 7200},
+    }
     assert r["ve_curve_available"] is True
+
+
+def test_insights_add_metric_units_source_paths_and_methods_without_removing_scalars():
+    r = extract_activity_insights(WZD, TEST_ACTIVITY, PROFILE)
+
+    assert r["thresholds"]["VT1"]["ve"] == 60.68
+    assert r["thresholds"]["VT1"]["hr"] == 131.0
+    assert r["thresholds"]["VT1"]["steady_state_power_w"] == 132.9
+    assert r["thresholds"]["VT1"]["metrics"] == {
+        "ve": {
+            "value": 60.68,
+            "canonical_unit": "L/min",
+            "source_path": "wzd.thresholds_zone.VT1.VE",
+            "method": "workout_zone_detection",
+        },
+        "hr": {
+            "value": 131.0,
+            "canonical_unit": "bpm",
+            "source_path": "wzd.thresholds_zone.VT1.HR",
+            "method": "workout_zone_detection",
+        },
+        "steady_state_power": {
+            "value": 132.9,
+            "canonical_unit": "W",
+            "source_path": "wzd.steady_state_intensity.VT1.power",
+            "method": "workout_zone_detection_steady_state",
+        },
+    }
+    assert r["metrics"] == {
+        "elapsed": {
+            "value": 3228,
+            "canonical_unit": "s",
+            "source_path": "activity.duration_seconds",
+            "method": "reported",
+        },
+        "energy": {
+            "value": 644.0,
+            "canonical_unit": "kcal",
+            "source_path": "activity.kcal_expenditure",
+            "method": "reported",
+        },
+    }
+    assert r["breakpoints"]["vt1"]["metrics"]["elapsed"] == {
+        "value": 2247,
+        "canonical_unit": "s",
+        "source_path": "activity.new_zone_vt1",
+        "method": "detected_breakpoint",
+    }
+    assert r["breakpoints"]["vt1"]["metrics"]["displayed_power"] == {
+        "value": 250.0,
+        "canonical_unit": "W",
+        "source_path": "activity.new_zone_vt1_metrics[24]",
+        "method": "positional_metric_array",
+    }
+
+
+def test_model_input_bounds_are_not_presented_as_activity_extrema():
+    r = extract_activity_insights(WZD, TEST_ACTIVITY, PROFILE)
+
+    assert "min_max" not in r
+    assert r["model_input_bounds"] == {
+        "values": {"HR_max": 179.0, "VE_max": 194.3},
+        "source_path": "wzd.min_max_used",
+        "method": "model_calibration_input",
+        "interpretation": "model_calibration_bounds_not_activity_extrema",
+    }
+
+
+def test_raw_channel_completeness_uses_arrays_and_omitted_lengths_including_zero():
+    activity = {
+        **TEST_ACTIVITY,
+        "predict_ve_v3": [57.0, 58.0],
+        "ext_hr": [],
+        "_omitted_fields": {
+            "predict_time_v3": {"type": "list", "length": 3228},
+            "ext_bike_power": {"type": "list", "length": 0},
+        },
+    }
+    activity.pop("predict_time_v3")
+    activity.pop("ext_bike_power")
+
+    r = extract_activity_insights(WZD, activity, PROFILE)
+
+    assert r["raw_channel_completeness"] == {
+        "method": "activity_array_inventory",
+        "channels": {
+            "ventilation": {
+                "state": "observed",
+                "sample_count": 2,
+                "source_path": "activity.predict_ve_v3",
+                "method": "array_length",
+            },
+            "elapsed": {
+                "state": "observed",
+                "sample_count": 3228,
+                "source_path": "activity.predict_time_v3",
+                "method": "omitted_field_length",
+            },
+            "heart_rate": {
+                "state": "reported_empty",
+                "sample_count": 0,
+                "source_path": "activity.ext_hr",
+                "method": "array_length",
+            },
+            "power": {
+                "state": "reported_empty",
+                "sample_count": 0,
+                "source_path": "activity.ext_bike_power",
+                "method": "omitted_field_length",
+            },
+        },
+    }
+    assert r["quality"]["fit_r2"] == 0.965
 
 
 def test_truncated_test_flagged():
@@ -78,6 +212,16 @@ def test_truncated_test_flagged():
     r = extract_activity_insights({}, activity, PROFILE)
     assert r["truncated_test"] is True
     assert "vo2max" not in r["detected_breakpoints"]
+    assert r["breakpoints"]["vo2max"]["availability"] == {
+        "state": "not_computed",
+        "reason": "threshold_not_detected",
+        "source": "activity.new_zone_vo2max",
+    }
+    assert r["breakpoints"]["fatmax"]["availability"] == {
+        "state": "not_computed",
+        "reason": "threshold_not_detected",
+        "source": "activity.new_zone_fatmax",
+    }
 
 
 def test_regular_ride_no_breakpoints_but_has_thresholds():
@@ -87,6 +231,18 @@ def test_regular_ride_no_breakpoints_but_has_thresholds():
     assert r["thresholds"]["VT1"]["confidence"] == "medium"
     assert r["thresholds"]["VT1"]["steady_state_power_w"] is None
     assert r["detected_breakpoints"] == {}
+    for name in ("vt1", "vt2", "vo2max", "fatmax"):
+        assert r["breakpoints"][name]["availability"] == {
+            "state": "not_computed",
+            "reason": "normal_activity",
+            "source": f"activity.new_zone_{name}",
+        }
+    assert r["raw_channel_completeness"]["channels"]["heart_rate"] == {
+        "state": "unknown",
+        "sample_count": None,
+        "source_path": "activity.ext_hr",
+        "method": "not_reported",
+    }
     assert r["ve_curve_available"] is False
     assert r["truncated_test"] is False
 

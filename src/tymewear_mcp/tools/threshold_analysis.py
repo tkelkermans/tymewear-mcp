@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from tymewear_mcp.tools.timestamps import reconcile_activity_timestamp
+
 # Positions inside the 28-element new_zone_<threshold>_metrics arrays (reverse-engineered).
 _METRIC_INSTANT_POWER = 12
 _METRIC_ROUNDED_POWER = 24
@@ -46,6 +48,73 @@ def _metric_num(metrics: Any, idx: int) -> float | None:
         return None
 
 
+def _metric(value: Any, canonical_unit: str, source_path: str, method: str) -> dict[str, Any]:
+    return {
+        "value": value,
+        "canonical_unit": canonical_unit,
+        "source_path": source_path,
+        "method": method,
+    }
+
+
+def _array_inventory(activity: dict[str, Any], field: str) -> dict[str, Any]:
+    source_path = f"activity.{field}"
+    value = activity.get(field)
+    if isinstance(value, list):
+        sample_count = len(value)
+        return {
+            "state": "observed" if sample_count else "reported_empty",
+            "sample_count": sample_count,
+            "source_path": source_path,
+            "method": "array_length",
+        }
+
+    omitted = activity.get("_omitted_fields")
+    omitted_entry = omitted.get(field) if isinstance(omitted, dict) else None
+    length = omitted_entry.get("length") if isinstance(omitted_entry, dict) else None
+    if isinstance(length, int) and not isinstance(length, bool) and length >= 0:
+        return {
+            "state": "observed" if length else "reported_empty",
+            "sample_count": length,
+            "source_path": source_path,
+            "method": "omitted_field_length",
+        }
+
+    return {
+        "state": "unknown",
+        "sample_count": None,
+        "source_path": source_path,
+        "method": "not_reported",
+    }
+
+
+def _raw_channel_completeness(activity: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "method": "activity_array_inventory",
+        "channels": {
+            "ventilation": _array_inventory(activity, "predict_ve_v3"),
+            "elapsed": _array_inventory(activity, "predict_time_v3"),
+            "heart_rate": _array_inventory(activity, "ext_hr"),
+            "power": _array_inventory(activity, "ext_bike_power"),
+        },
+    }
+
+
+def _breakpoint_availability(name: str, *, detected: bool, is_test: bool) -> dict[str, str]:
+    return {
+        "state": "available" if detected else "not_computed",
+        "reason": "threshold_detected" if detected else ("threshold_not_detected" if is_test else "normal_activity"),
+        "source": f"activity.new_zone_{name}",
+    }
+
+
+def _duration_metric(activity: dict[str, Any]) -> dict[str, Any]:
+    duration_seconds = activity.get("duration_seconds")
+    if isinstance(duration_seconds, (int, float)) and not isinstance(duration_seconds, bool):
+        return _metric(duration_seconds, "s", "activity.duration_seconds", "reported")
+    return _metric(_mmss_to_seconds(activity.get("duration")), "s", "activity.duration", "parsed_duration")
+
+
 def extract_activity_insights(
     wzd: dict[str, Any], activity: dict[str, Any], profile: dict[str, Any]
 ) -> dict[str, Any]:
@@ -62,11 +131,24 @@ def extract_activity_insights(
             continue
         steady_entry = steady.get(name)
         power = steady_entry.get("power") if isinstance(steady_entry, dict) else None
+        ve = entry.get("VE")
+        hr = entry.get("HR")
+        steady_state_power = round(power, 1) if isinstance(power, (int, float)) else None
         thresholds[name] = {
-            "ve": entry.get("VE"),
-            "hr": entry.get("HR"),
+            "ve": ve,
+            "hr": hr,
             "confidence": entry.get("confidence"),
-            "steady_state_power_w": round(power, 1) if isinstance(power, (int, float)) else None,
+            "steady_state_power_w": steady_state_power,
+            "metrics": {
+                "ve": _metric(ve, "L/min", f"wzd.thresholds_zone.{name}.VE", "workout_zone_detection"),
+                "hr": _metric(hr, "bpm", f"wzd.thresholds_zone.{name}.HR", "workout_zone_detection"),
+                "steady_state_power": _metric(
+                    steady_state_power,
+                    "W",
+                    f"wzd.steady_state_intensity.{name}.power",
+                    "workout_zone_detection_steady_state",
+                ),
+            },
         }
 
     quality_raw = zones.get("_quality")
@@ -81,22 +163,71 @@ def extract_activity_insights(
         else None
     )
 
+    raw_channel_completeness = _raw_channel_completeness(activity)
+    ve_sample_count = raw_channel_completeness["channels"]["ventilation"]["sample_count"]
+    ve_curve_available = isinstance(ve_sample_count, int) and ve_sample_count > 0
+
+    parsed_breakpoints = {
+        key: _mmss_to_seconds(activity.get(f"new_zone_{key}"))
+        for key in ("vt1", "vt2", "vo2max", "fatmax")
+    }
+    type_display = activity.get("type_display")
+    is_test = ve_curve_available or any(value is not None for value in parsed_breakpoints.values()) or (
+        isinstance(type_display, str) and "test" in type_display.lower()
+    )
+
     # Detected breakpoints with displayed power profile (populated only for threshold tests).
+    detected_breakpoints: dict[str, Any] = {}
     breakpoints: dict[str, Any] = {}
     for key in ("vt1", "vt2", "vo2max", "fatmax"):
-        secs = _mmss_to_seconds(activity.get(f"new_zone_{key}"))
+        secs = parsed_breakpoints[key]
         if secs is None:
+            breakpoints[key] = {"availability": _breakpoint_availability(key, detected=False, is_test=is_test)}
             continue
         metrics = activity.get(f"new_zone_{key}_metrics")
-        breakpoints[key] = {
+        displayed_power = _metric_num(metrics, _METRIC_ROUNDED_POWER)
+        instant_power = _metric_num(metrics, _METRIC_INSTANT_POWER)
+        breakpoint = {
+            "availability": _breakpoint_availability(key, detected=True, is_test=is_test),
             "time": activity.get(f"new_zone_{key}"),
             "time_seconds": secs,
-            "displayed_power_w": _metric_num(metrics, _METRIC_ROUNDED_POWER),
-            "instant_power_w": _metric_num(metrics, _METRIC_INSTANT_POWER),
+            "displayed_power_w": displayed_power,
+            "instant_power_w": instant_power,
+            "metrics": {
+                "elapsed": _metric(
+                    secs,
+                    "s",
+                    f"activity.new_zone_{key}",
+                    "detected_breakpoint",
+                ),
+                "displayed_power": _metric(
+                    displayed_power,
+                    "W",
+                    f"activity.new_zone_{key}_metrics[{_METRIC_ROUNDED_POWER}]",
+                    "positional_metric_array",
+                ),
+                "instant_power": _metric(
+                    instant_power,
+                    "W",
+                    f"activity.new_zone_{key}_metrics[{_METRIC_INSTANT_POWER}]",
+                    "positional_metric_array",
+                ),
+            },
         }
+        breakpoints[key] = breakpoint
+        detected_breakpoints[key] = breakpoint
 
-    is_test = bool(activity.get("predict_ve_v3"))
-    truncated = is_test and ("vt1" in breakpoints or "vt2" in breakpoints) and "vo2max" not in breakpoints
+    truncated = (
+        is_test
+        and ("vt1" in detected_breakpoints or "vt2" in detected_breakpoints)
+        and "vo2max" not in detected_breakpoints
+    )
+    timestamps = reconcile_activity_timestamp(
+        unix_timestamp=activity.get("unix_timestamp"),
+        source_timestamp=activity.get("time_stamp"),
+        tz_name=activity.get("tz_name"),
+        tz_offset=activity.get("tz_offset"),
+    )
 
     return {
         "activity_id": activity.get("id"),
@@ -104,17 +235,34 @@ def extract_activity_insights(
         "sport": activity.get("sport_display"),
         "data_type": activity.get("data_type"),
         "duration": activity.get("duration"),
-        "started_at": activity.get("time_stamp"),
+        "started_at": timestamps["utc"],
         "unix_timestamp": activity.get("unix_timestamp"),
+        "timestamps": timestamps,
         "fitness_level": activity.get("new_zone_fitness_level"),
         "thresholds": thresholds,
-        "detected_breakpoints": breakpoints,
+        "breakpoints": breakpoints,
+        "detected_breakpoints": detected_breakpoints,
         "ve_targets": _ve_targets(profile, activity.get("sport")),
         "zone_summary": wzd.get("zone_summary_table"),
         "zone_time_kcal": activity.get("new_zone_thresholds_kcal_hrs"),
-        "min_max": wzd.get("min_max_used"),
+        "metrics": {
+            "elapsed": _duration_metric(activity),
+            "energy": _metric(
+                activity.get("kcal_expenditure"),
+                "kcal",
+                "activity.kcal_expenditure",
+                "reported",
+            ),
+        },
+        "model_input_bounds": {
+            "values": wzd.get("min_max_used"),
+            "source_path": "wzd.min_max_used",
+            "method": "model_calibration_input",
+            "interpretation": "model_calibration_bounds_not_activity_extrema",
+        },
         "quality": quality_out,
-        "ve_curve_available": is_test,
+        "raw_channel_completeness": raw_channel_completeness,
+        "ve_curve_available": ve_curve_available,
         "truncated_test": truncated,
         "note": (
             "Power is recorded from the power meter paired in the Tyme Wear app (measured, not estimated). "
