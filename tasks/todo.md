@@ -72,3 +72,26 @@
 - Fresh full suite: 508 passed.
 - Independent re-review: Ready with no Critical or Important findings.
 - No deploy or push performed.
+
+# Published PR CI repair
+
+- [x] Refresh PR #1 and reproduce the GitHub Actions failure.
+- [x] Confirm that unlocked pip selected incompatible `mcp==2.0.0` while the
+  verified lock retained MCP 1.x.
+- [x] Add RED coverage for the MCP major-version boundary and locked CI gates.
+- [x] Cap the runtime dependency at MCP 1.x and regenerate `uv.lock`.
+- [x] Replace unlocked pip CI setup with immutable `setup-uv` and `uv --locked`.
+- [x] Run final focused, Ruff, Mypy, lock, workflow, and full-suite verification.
+- [ ] Commit and push the repair, then verify PR #1 checks.
+
+## CI repair review
+
+- RED: 2 failed for the intended dependency and workflow-contract gaps.
+- Focused GREEN: 2 passed.
+- Exact locked sync: passed.
+- Final focused: 2 passed.
+- Ruff: clean.
+- Mypy: clean across 36 source files.
+- Lock check and workflow YAML parse: clean.
+- Fresh full suite: 510 passed.
+- Remote checks: pending commit and push.
