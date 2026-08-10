@@ -1,5 +1,10 @@
 # Lessons
 
+- Prefer the platform's native Git integration for Vercel preview and production
+  deployment. Keep GitHub Actions responsible for deterministic quality gates;
+  do not add a second token-authenticated CLI deployment path unless native Git
+  deployment is unavailable or explicitly required.
+
 - Treat arbitrary upstream JSON values as untrusted shapes. Presence checks must
   not hash dict/list values, and compact status snapshots must validate any
   scalar before returning it rather than echoing URL, path, email, token, or

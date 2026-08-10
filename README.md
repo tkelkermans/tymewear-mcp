@@ -106,35 +106,33 @@ docker run --rm -p 8000:8000 \
 
 ### Vercel
 
-The repo also includes a Vercel ASGI entrypoint (`api/index.py`) and `vercel.json`. Link the repository to the intended Vercel project first, then configure at least `TYMEWEAR_PUBLIC_BEARER_TOKENS` in that project before deploying it. The entrypoint fails closed if the public bearer token env is absent. `TYMEWEAR_PUBLIC_URL` is recommended for production aliases, but preview deployments can derive it from Vercel's deployment URL.
+The repo also includes a Vercel ASGI entrypoint (`api/index.py`) and `vercel.json`. Link the local directory to the intended Vercel project, connect that project to the Git repository, then configure at least `TYMEWEAR_PUBLIC_BEARER_TOKENS` for both Production and Preview. The entrypoint fails closed if the public bearer token env is absent. Use a separate Preview bearer token to limit credential scope. `TYMEWEAR_PUBLIC_URL` is recommended for production aliases, but preview deployments can derive it from Vercel's deployment URL.
 
 ```bash
-TOKEN_FILE=/path/to/generated-public-bearer-token
-chmod 600 "$TOKEN_FILE"
-vercel link  # or: vercel link --repo for repo-level project linking
-vercel env add TYMEWEAR_PUBLIC_BEARER_TOKENS production --sensitive --yes < "$TOKEN_FILE"
-vercel deploy --prod
+PRODUCTION_TOKEN_FILE=/path/to/generated-production-bearer-token
+PREVIEW_TOKEN_FILE=/path/to/generated-preview-bearer-token
+chmod 600 "$PRODUCTION_TOKEN_FILE" "$PREVIEW_TOKEN_FILE"
+vercel link
+vercel git connect
+vercel env add TYMEWEAR_PUBLIC_BEARER_TOKENS production --sensitive --yes < "$PRODUCTION_TOKEN_FILE"
+vercel env add TYMEWEAR_PUBLIC_BEARER_TOKENS preview --sensitive --yes < "$PREVIEW_TOKEN_FILE"
 ```
 
-Keep the token file readable only by its owner; the deployment wrapper rejects token files that are accessible by group or others. Use `vercel env update TYMEWEAR_PUBLIC_BEARER_TOKENS production --sensitive --yes < "$TOKEN_FILE"` when rotating an existing token. Do not pass bearer tokens through `vercel deploy --env`, shell `echo`, or other command arguments that can end up in shell history or process listings.
+Keep token files readable only by their owner; the deployment wrapper rejects token files that are accessible by group or others. Use `vercel env update TYMEWEAR_PUBLIC_BEARER_TOKENS production --sensitive --yes < "$PRODUCTION_TOKEN_FILE"` when rotating an existing token. Do not pass bearer tokens through `vercel deploy --env`, shell `echo`, or other command arguments that can end up in shell history or process listings.
 
-The same path is wrapped by `scripts/deploy_public_vercel.sh`, which requires an existing Vercel project link, uploads the token from a file, deploys production, and runs `scripts/verify_public_endpoint.py` against the deployed MCP URL:
+The same path is wrapped by `scripts/deploy_public_vercel.sh` for manual recovery deployments. It requires an existing Vercel project link, uploads the token from a file, deploys production, and runs `scripts/verify_public_endpoint.py` against the deployed MCP URL:
 
 ```bash
-scripts/deploy_public_vercel.sh --token-file "$TOKEN_FILE"
+scripts/deploy_public_vercel.sh --token-file "$PRODUCTION_TOKEN_FILE"
 ```
 
 Set `PYTHON=/path/to/python` when the verifier should run with a specific interpreter, such as the repo virtual environment.
 
 ### Automated deploy (CI/CD)
 
-`.github/workflows/deploy.yml` runs the test suite (ruff + mypy + pytest) on every push and pull request, and — when a push to `main` passes — deploys the public MCP to Vercel production automatically, so a hosted instance stays current without running the script by hand.
+`.github/workflows/deploy.yml` runs the locked test suite (ruff + mypy + pytest) on every push and pull request. It does not hold Vercel credentials or deploy the application.
 
-To enable it, add one repository secret under **Settings → Secrets and variables → Actions**:
-
-- **`VERCEL_TOKEN`** — a Vercel access token (Vercel → Account Settings → Tokens).
-
-The org/project IDs are baked into the workflow (they are not secret and grant nothing without the token). The runtime `TYMEWEAR_PUBLIC_BEARER_TOKENS` env var persists in the Vercel project across deploys; rotate it with `scripts/deploy_public_vercel.sh`, not CI.
+The linked Vercel Git integration creates preview deployments for feature branches and pull requests, then creates the production deployment when `main` is updated. No `VERCEL_TOKEN` GitHub Actions secret is required. Runtime variables such as `TYMEWEAR_PUBLIC_BEARER_TOKENS` remain managed in the Vercel project and persist across Git deployments.
 
 ### claude.ai connector (OAuth)
 

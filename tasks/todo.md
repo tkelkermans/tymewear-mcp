@@ -97,3 +97,26 @@
 - Repair commit: `233ee58`.
 - GitHub Actions replacement run `31362161930`: test passed in 18 seconds;
   deployment correctly skipped for the pull-request event.
+
+# Native Vercel Git deployment
+
+- [x] Confirm that the token requirement came from the inherited CLI deploy job,
+  not the complete-analysis implementation.
+- [x] Add RED coverage proving CI contains no deploy job, `VERCEL_TOKEN`, or
+  `vercel deploy` command.
+- [x] Keep locked Ruff, Mypy, and Pytest gates in GitHub Actions.
+- [x] Remove the token-authenticated production job and document native Vercel
+  Git deployment as the default.
+- [x] Connect the existing Vercel project to the GitHub repository.
+- [x] Run final local verification.
+- [ ] Commit, push, and verify CI plus the native Vercel preview.
+
+## Native deployment review
+
+- Vercel project link: GitHub `tkelkermans/tymewear-mcp`, production branch
+  `main`.
+- Preview uses a dedicated sensitive bearer rather than the Production bearer.
+- RED: 1 failed, 2 passed; focused GREEN: 3 passed.
+- Final Ruff and Mypy: clean.
+- Lock and workflow YAML checks: clean.
+- Fresh full suite: 511 passed.

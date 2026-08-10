@@ -21,7 +21,10 @@ def test_runtime_dependency_accepts_mcp_1_and_rejects_breaking_mcp_2() -> None:
 
 def test_ci_uses_the_checked_lock_for_install_and_every_python_gate() -> None:
     workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
-    test_job_match = re.search(r"(?ms)^  test:\n(?P<body>.*?)(?=^  deploy:\n)", workflow)
+    test_job_match = re.search(
+        r"(?ms)^  test:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:\n|\Z)",
+        workflow,
+    )
     assert test_job_match is not None
     test_job = test_job_match.group("body")
 
@@ -36,3 +39,11 @@ def test_ci_uses_the_checked_lock_for_install_and_every_python_gate() -> None:
     assert "run: uv run --locked pytest -q" in test_job
 
     assert "pip install" not in test_job
+
+
+def test_ci_delegates_deployment_to_native_vercel_git_integration() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+
+    assert re.search(r"(?m)^  deploy:$", workflow) is None
+    assert "VERCEL_TOKEN" not in workflow
+    assert "vercel deploy" not in workflow
