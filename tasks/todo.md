@@ -109,7 +109,10 @@
   Git deployment as the default.
 - [x] Connect the existing Vercel project to the GitHub repository.
 - [x] Run final local verification.
-- [ ] Commit, push, and verify CI plus the native Vercel preview.
+- [x] Commit and push the native deployment workflow, then verify GitHub CI.
+- [x] Diagnose the first native preview's `/healthz` and `/mcp` 404 responses.
+- [ ] Move to the root Python ASGI entrypoint, remove obsolete rewrites, and
+  verify the replacement native preview end to end.
 
 ## Native deployment review
 
@@ -120,3 +123,7 @@
 - Final Ruff and Mypy: clean.
 - Lock and workflow YAML checks: clean.
 - Fresh full suite: 511 passed.
+- First native preview: build Ready, but both public routes returned 404.
+- Root cause: current Vercel Python rewrites pass the rewritten `/api/index`
+  path into the ASGI app; the public app intentionally serves `/healthz`,
+  `/mcp`, and `/.well-known/*` instead.

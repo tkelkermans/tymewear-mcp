@@ -9,7 +9,7 @@ from starlette.applications import Starlette
 
 
 def _load_entrypoint_module(name: str):
-    entrypoint = Path(__file__).resolve().parents[1] / "api" / "index.py"
+    entrypoint = Path(__file__).resolve().parents[1] / "main.py"
     spec = importlib.util.spec_from_file_location(name, entrypoint)
     assert spec is not None
     assert spec.loader is not None
@@ -40,12 +40,10 @@ def test_vercel_entrypoint_fails_closed_without_public_bearer_token(monkeypatch)
         _load_entrypoint_module("vercel_entrypoint_missing_token_test")
 
 
-def test_vercel_json_configures_api_entrypoint():
-    vercel_config = json.loads((Path(__file__).resolve().parents[1] / "vercel.json").read_text())
+def test_vercel_json_does_not_rewrite_public_routes_to_the_entrypoint():
+    root = Path(__file__).resolve().parents[1]
+    vercel_config = json.loads((root / "vercel.json").read_text())
 
     assert "functions" not in vercel_config
-    assert {rewrite["source"] for rewrite in vercel_config["rewrites"]} >= {
-        "/healthz",
-        "/mcp",
-        "/.well-known/:path*",
-    }
+    assert "rewrites" not in vercel_config
+    assert not (root / "api" / "index.py").exists()

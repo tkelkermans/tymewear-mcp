@@ -1,5 +1,10 @@
 # Lessons
 
+- For current Vercel Python framework deployments, expose a root ASGI
+  entrypoint and let the framework preserve application paths. Do not rewrite
+  public ASGI routes to an internal function path because the rewritten path is
+  now passed to the application and can turn every endpoint into a 404.
+
 - Prefer the platform's native Git integration for Vercel preview and production
   deployment. Keep GitHub Actions responsible for deterministic quality gates;
   do not add a second token-authenticated CLI deployment path unless native Git
