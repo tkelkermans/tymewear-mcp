@@ -111,7 +111,7 @@
 - [x] Run final local verification.
 - [x] Commit and push the native deployment workflow, then verify GitHub CI.
 - [x] Diagnose the first native preview's `/healthz` and `/mcp` 404 responses.
-- [ ] Move to the root Python ASGI entrypoint, remove obsolete rewrites, and
+- [x] Move to the root Python ASGI entrypoint, remove obsolete rewrites, and
   verify the replacement native preview end to end.
 
 ## Native deployment review
@@ -127,3 +127,11 @@
 - Root cause: current Vercel Python rewrites pass the rewritten `/api/index`
   path into the ASGI app; the public app intentionally serves `/healthz`,
   `/mcp`, and `/.well-known/*` instead.
+- Routing-fix RED: 3 failed; focused GREEN: 3 passed.
+- Final Ruff and Mypy: clean; lock check: clean; full suite: 511 passed.
+- GitHub Actions run `31365215277`: passed.
+- Native preview `dpl_8MzBmHUFNU4Tabj7Azmkrd5h8YyE`: Ready for commit
+  `13025a3422b47b49eb4226d921857898b939ed68`.
+- Authenticated Vercel preview checks: `/healthz` returned `{"status":"ok"}`;
+  unauthenticated `/mcp` reached the app and returned `401` with the expected
+  Bearer challenge.
