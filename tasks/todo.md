@@ -82,7 +82,7 @@
 - [x] Cap the runtime dependency at MCP 1.x and regenerate `uv.lock`.
 - [x] Replace unlocked pip CI setup with immutable `setup-uv` and `uv --locked`.
 - [x] Run final focused, Ruff, Mypy, lock, workflow, and full-suite verification.
-- [ ] Commit and push the repair, then verify PR #1 checks.
+- [x] Commit and push the repair, then verify PR #1 checks.
 
 ## CI repair review
 
@@ -94,4 +94,6 @@
 - Mypy: clean across 36 source files.
 - Lock check and workflow YAML parse: clean.
 - Fresh full suite: 510 passed.
-- Remote checks: pending commit and push.
+- Repair commit: `233ee58`.
+- GitHub Actions replacement run `31362161930`: test passed in 18 seconds;
+  deployment correctly skipped for the pull-request event.
