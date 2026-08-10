@@ -2,42 +2,73 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from tymewear_mcp.client.http import TymeClient
+from tymewear_mcp.tools._slimming import slim_dict
+
+_HEAVY_ACTIVITY_FIELDS = frozenset(
+    {
+        "x", "onesignal_results",
+        "predict_ve", "predict_time", "predict_ve_zone1", "predict_ve_zone2", "predict_ve_zone3",
+        "predict_ve_v3", "predict_time_v3",
+        "predict_ve_zone2_v3", "predict_ve_zone3_v3", "predict_ve_zone4_v3", "predict_ve_zone5_v3",
+        "regression_analysis_x", "assoc_results", "plf_x_results",
+        "zones_predict_plot", "zones_predict_v3_plot",
+        "ext_hr", "ext_bike_power", "ext_cadence", "ext_speed",
+    }
+)
 
 
 async def get_activities(
-    client: TymeClient, user_id: int, sport: int | None = None,
-    limit: int = 50, cursor: str | None = None,
+    client: TymeClient,
+    user_id: int,
+    sport: int | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+    sports: list[str] | None = None,
+    activity_types: list[str] | None = None,
+    search: str | None = None,
+    requested_user_id: str | None = None,
+    pro_team: str | None = None,
 ) -> dict[str, Any]:
-    params: dict[str, Any] = {"user": user_id, "limit": limit}
-    if sport is not None:
-        params["type"] = sport
+    params: dict[str, Any] = {"user": requested_user_id or user_id, "limit": limit}
+    sport_filters = sports if sports is not None else ([str(sport)] if sport is not None else None)
+    if sport_filters:
+        params["sport"] = sport_filters
+    if activity_types:
+        params["type"] = activity_types
+    if search:
+        params["search"] = search
     if cursor is not None:
         params["cursor"] = cursor
+    if pro_team:
+        params["pro_team"] = pro_team
     data = await client.get("/v2/api/activities-cursor/", params=params)
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
-async def get_activity(client: TymeClient, activity_id: str) -> dict[str, Any]:
+async def get_activity(
+    client: TymeClient, activity_id: str, include: list[str] | None = None
+) -> dict[str, Any]:
     data = await client.get(f"/v2/api/activities/{activity_id}/")
-    return client.sanitize(data)
+    sanitized = client.sanitize(data)
+    return cast(dict[str, Any], slim_dict(sanitized, _HEAVY_ACTIVITY_FIELDS, include or []))
 
 
 async def get_activity_status(client: TymeClient, activity_id: str) -> dict[str, Any]:
     data = await client.get(f"/v2/api/activities/{activity_id}/status/")
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
 async def pin_activity(client: TymeClient, activity_id: str) -> dict[str, Any]:
     data = await client.post(f"/api/activities/{activity_id}/pin/")
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
 async def get_pinned_activity(client: TymeClient, user_id: int) -> dict[str, Any]:
     data = await client.get(f"/api/users/{user_id}/pinned-activity/")
-    return client.sanitize(data)
+    return cast(dict[str, Any], client.sanitize(data))
 
 
 async def delete_activity(client: TymeClient, activity_id: str) -> dict[str, str]:

@@ -2,8 +2,6 @@
 
 from unittest.mock import AsyncMock
 
-import pytest
-
 from tymewear_mcp.tools.auth_status import auth_status
 
 

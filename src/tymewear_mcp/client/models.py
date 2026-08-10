@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -74,8 +76,8 @@ class Activity(BaseModel):
     data_type: str
     success_rate: str
     kcal_expenditure: float | None
-    zones_distribution_summary_table: list
-    new_zone_distribution_summary_table: list
+    zones_distribution_summary_table: list[Any]
+    new_zone_distribution_summary_table: list[Any]
 
 
 class ActivityDetail(Activity):
@@ -83,15 +85,15 @@ class ActivityDetail(Activity):
     placeholder: bool
     unix_timestamp: int
     tz_name: str
-    intervals: dict
-    third_party_activities: list
+    intervals: dict[str, Any]
+    third_party_activities: list[Any]
     is_bike: bool
     admin_notes: str
-    ext_hr: list
-    ext_bike_power: list
-    ext_cadence: list
-    ext_speed: list
-    zones: list
+    ext_hr: list[Any]
+    ext_bike_power: list[Any]
+    ext_cadence: list[Any]
+    ext_speed: list[Any]
+    zones: list[Any]
     tss: float | None
     balance_point: str
     strap_model: str | None

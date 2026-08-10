@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import cast
 
 import keyring
 
@@ -23,7 +24,7 @@ class KeyringStorage:
             raw = keyring.get_password(SERVICE_NAME, ACCOUNT_NAME)
             if raw is None:
                 return None
-            return json.loads(raw)
+            return cast(dict[str, str], json.loads(raw))
         except Exception:
             logger.debug("Failed to load from keyring", exc_info=True)
             return None

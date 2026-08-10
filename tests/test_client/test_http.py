@@ -14,6 +14,23 @@ def mock_credentials():
 
 
 class TestTymeClient:
+    async def test_access_token_client_uses_token_without_signin(self):
+        client = TymeClient(access_token="upstream-token")
+        assert await client._ensure_token() == "upstream-token"
+
+        api_response = httpx.Response(200, json={"id": 1})
+        with patch.object(client, "_http") as mock_http:
+            mock_http.get = AsyncMock(return_value=api_response)
+            mock_http.post = AsyncMock()
+            await client.get("/v2/api/profile/")
+
+            mock_http.post.assert_not_called()
+            call_kwargs = mock_http.get.call_args[1]
+            assert call_kwargs["headers"]["Authorization"] == "Token upstream-token"
+            assert call_kwargs["headers"]["X-Source"] == "v2"
+
+        await client.close()
+
     async def test_authenticates_on_first_request(self, mock_credentials):
         client = TymeClient(credentials=mock_credentials)
         signin_response = httpx.Response(200, json={"token": "abc123"})
@@ -34,7 +51,7 @@ class TestTymeClient:
         api_response = httpx.Response(200, json={"id": 1})
         with patch.object(client, "_http") as mock_http:
             mock_http.get = AsyncMock(return_value=api_response)
-            result = await client.get("/v2/api/profile/")
+            await client.get("/v2/api/profile/")
             call_kwargs = mock_http.get.call_args[1]
             assert call_kwargs["headers"]["Authorization"] == "Token mytoken"
             assert call_kwargs["headers"]["X-Source"] == "v2"
@@ -77,6 +94,76 @@ class TestTymeClient:
         assert sanitized["id"] == 1
         await client.close()
 
+    async def test_sanitize_removes_sensitive_key_variants_from_nested_payloads(self, mock_credentials):
+        client = TymeClient(credentials=mock_credentials)
+        data = {
+            "id": 1,
+            "api_key": "api-secret",
+            "client_secret": "client-secret",
+            "nested": [
+                {
+                    "auth_token": "auth-secret",
+                    "apiKey": "camel-api-secret",
+                    "clientSecret": "camel-client-secret",
+                    "X-Amz-Credential": "aws-credential",
+                    "visible": "kept",
+                },
+                {
+                    "X-Amz-Security-Token": "aws-token",
+                    "X-Amz-Signature": "aws-signature",
+                    "refreshToken": "camel-refresh-secret",
+                    "name": "export",
+                },
+            ],
+        }
+
+        sanitized = client.sanitize(data)
+
+        assert sanitized == {
+            "id": 1,
+            "nested": [
+                {"visible": "kept"},
+                {"name": "export"},
+            ],
+        }
+        await client.close()
+
+    async def test_sanitize_redacts_sensitive_url_query_params(self, mock_credentials):
+        client = TymeClient(credentials=mock_credentials)
+        data = {
+            "download_url": (
+                "https://s3.example.com/export.fit?"
+                "apiKey=camel-api-secret&"
+                "clientSecret=camel-client-secret&"
+                "X-Amz-Credential=credential-secret&"
+                "X-Amz-Security-Token=token-secret&"
+                "X-Amz-Signature=signature-secret&"
+                "Expires=123&"
+                "response-content-type=application%2Foctet-stream"
+            ),
+            "plain": "https://example.com/path?format=fit",
+        }
+
+        sanitized = client.sanitize(data)
+
+        assert sanitized["download_url"] == (
+            "https://s3.example.com/export.fit?"
+            "apiKey=%5BREDACTED%5D&"
+            "clientSecret=%5BREDACTED%5D&"
+            "X-Amz-Credential=%5BREDACTED%5D&"
+            "X-Amz-Security-Token=%5BREDACTED%5D&"
+            "X-Amz-Signature=%5BREDACTED%5D&"
+            "Expires=123&"
+            "response-content-type=application%2Foctet-stream"
+        )
+        assert "camel-api-secret" not in sanitized["download_url"]
+        assert "camel-client-secret" not in sanitized["download_url"]
+        assert "credential-secret" not in sanitized["download_url"]
+        assert "token-secret" not in sanitized["download_url"]
+        assert "signature-secret" not in sanitized["download_url"]
+        assert sanitized["plain"] == "https://example.com/path?format=fit"
+        await client.close()
+
     async def test_rate_limiting(self, mock_credentials):
         import time
 
@@ -94,3 +181,18 @@ class TestTymeClient:
             assert elapsed >= 0.1
 
         await client.close()
+
+
+async def test_get_raw_returns_response():
+    client = TymeClient({"email": "test@example.com", "password": "secret"})
+    client._token = "token"
+    raw_response = httpx.Response(200, content=b"fit-bytes")
+
+    with patch.object(client, "_http") as mock_http:
+        mock_http.get = AsyncMock(return_value=raw_response)
+        result = await client.get_raw("/api/activities/abc/fit/")
+
+    assert result is raw_response
+    mock_http.get.assert_called_once()
+
+    await client.close()
