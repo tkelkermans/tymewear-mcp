@@ -44,6 +44,6 @@ def test_vercel_json_does_not_rewrite_public_routes_to_the_entrypoint():
     root = Path(__file__).resolve().parents[1]
     vercel_config = json.loads((root / "vercel.json").read_text())
 
-    assert "functions" not in vercel_config
     assert "rewrites" not in vercel_config
+    assert vercel_config["functions"] == {"main.py": {"maxDuration": 90}}
     assert not (root / "api" / "index.py").exists()

@@ -36,6 +36,7 @@ HSTS_HEADER_VALUE = "max-age=31536000"
 PUBLIC_TOKEN_ENV = "TYMEWEAR_PUBLIC_BEARER_TOKENS"
 LEGACY_PUBLIC_TOKEN_ENV = "TYMEWEAR_PUBLIC_BEARER_TOKEN"
 PUBLIC_ALLOW_MUTATIONS_ENV = "TYMEWEAR_PUBLIC_ALLOW_MUTATIONS"
+PUBLIC_JSON_RESPONSE_ENV = "TYMEWEAR_PUBLIC_JSON_RESPONSE"
 PUBLIC_MAX_BODY_BYTES_ENV = "TYMEWEAR_PUBLIC_MAX_BODY_BYTES"
 UPSTREAM_TOKEN_HEADER = "x-tymewear-token"
 UPSTREAM_AUTHORIZATION_HEADER = "x-tymewear-authorization"
@@ -79,9 +80,9 @@ def _split_tokens(value: str | None) -> list[str]:
     return [token.strip() for token in value.split(",") if token.strip()]
 
 
-def _env_flag(value: str | None) -> bool:
-    if value is None:
-        return False
+def _env_flag(value: str | None, *, default: bool = False) -> bool:
+    if value is None or not value.strip():
+        return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -202,7 +203,7 @@ class PublicServerConfig:
     allowed_origins: list[str] = field(default_factory=list)
     mcp_path: str = DEFAULT_PUBLIC_MCP_PATH
     scopes: list[str] = field(default_factory=lambda: [DEFAULT_PUBLIC_SCOPE])
-    json_response: bool = False
+    json_response: bool = True
     issuer_url: str | None = None
     oidc_audience: str | None = None
     oidc_jwks_uri: str | None = None
@@ -247,7 +248,7 @@ class PublicServerConfig:
         allowed_origins: list[str] | None = None,
         issuer_url: str | None = None,
         mcp_path: str = DEFAULT_PUBLIC_MCP_PATH,
-        json_response: bool = False,
+        json_response: bool | None = None,
         allow_mutations: bool | None = None,
         max_body_bytes: int | None = None,
     ) -> PublicServerConfig:
@@ -276,7 +277,9 @@ class PublicServerConfig:
             oidc_jwks_uri=env.get("TYMEWEAR_OIDC_JWKS_URL"),
             allowed_emails=_split_tokens(env.get("TYMEWEAR_ALLOWED_EMAILS")),
             mcp_path=mcp_path,
-            json_response=json_response,
+            json_response=json_response
+            if json_response is not None
+            else _env_flag(env.get(PUBLIC_JSON_RESPONSE_ENV), default=True),
             allow_mutations=_env_flag(env.get(PUBLIC_ALLOW_MUTATIONS_ENV))
             if allow_mutations is None
             else allow_mutations,
