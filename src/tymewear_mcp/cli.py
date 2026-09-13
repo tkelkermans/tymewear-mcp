@@ -114,7 +114,7 @@ def cmd_serve_public(args: argparse.Namespace) -> None:
         allowed_origins=args.allowed_origin,
         issuer_url=args.issuer_url,
         mcp_path=args.path,
-        json_response=args.json_response,
+        json_response=True if args.json_response else None,
         allow_mutations=args.allow_mutations,
         max_body_bytes=args.max_body_bytes,
     )
@@ -164,7 +164,8 @@ def main() -> None:
     public_parser.add_argument(
         "--json-response",
         action="store_true",
-        help="Use JSON responses for Streamable HTTP requests instead of SSE streams.",
+        help="Force JSON Streamable HTTP responses. Hosted/Vercel already defaults to JSON; "
+        "set TYMEWEAR_PUBLIC_JSON_RESPONSE=false to use SSE streams.",
     )
     public_parser.add_argument(
         "--allow-mutations",

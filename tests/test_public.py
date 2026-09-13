@@ -106,6 +106,7 @@ def test_public_config_derives_public_url_from_vercel_env():
     assert config.public_url == "https://tymewear-mcp-public-abc.vercel.app/mcp"
     assert config.allowed_hosts == ["tymewear-mcp-public-abc.vercel.app"]
     assert config.allowed_origins == ["https://tymewear-mcp-public-abc.vercel.app"]
+    assert config.json_response is True
 
 
 def test_public_config_rejects_public_url_query_fragment_and_path_mismatch():
@@ -144,6 +145,42 @@ def test_public_config_rejects_invalid_mcp_path():
             allowed_origins=["https://mcp.example.com"],
             mcp_path="/mcp?debug=true",
         )
+
+
+def test_public_config_defaults_to_json_response_and_accepts_streaming_opt_out():
+    default_config = PublicServerConfig.from_env(
+        {
+            "VERCEL_URL": "tymewear-mcp-public-abc.vercel.app",
+            "TYMEWEAR_PUBLIC_BEARER_TOKENS": TEST_BEARER_TOKEN,
+        }
+    )
+    env_config = PublicServerConfig.from_env(
+        {
+            "VERCEL_URL": "tymewear-mcp-public-abc.vercel.app",
+            "TYMEWEAR_PUBLIC_BEARER_TOKENS": TEST_BEARER_TOKEN,
+            "TYMEWEAR_PUBLIC_JSON_RESPONSE": "false",
+        }
+    )
+    explicit_config = PublicServerConfig.from_env(
+        {
+            "VERCEL_URL": "tymewear-mcp-public-abc.vercel.app",
+            "TYMEWEAR_PUBLIC_BEARER_TOKENS": TEST_BEARER_TOKEN,
+            "TYMEWEAR_PUBLIC_JSON_RESPONSE": "true",
+        },
+        json_response=False,
+    )
+    env_true_config = PublicServerConfig.from_env(
+        {
+            "VERCEL_URL": "tymewear-mcp-public-abc.vercel.app",
+            "TYMEWEAR_PUBLIC_BEARER_TOKENS": TEST_BEARER_TOKEN,
+            "TYMEWEAR_PUBLIC_JSON_RESPONSE": "true",
+        }
+    )
+
+    assert default_config.json_response is True
+    assert env_config.json_response is False
+    assert explicit_config.json_response is False
+    assert env_true_config.json_response is True
 
 
 def test_public_config_defaults_to_read_only_and_accepts_mutation_opt_in():
