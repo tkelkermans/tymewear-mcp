@@ -10,12 +10,14 @@ Tyme Wear makes the VitalPro chest strap, a wearable breathing sensor that measu
 
 ## Features
 
-- **40 MCP tools** for profile, activities, breathing data, VE thresholds, compact per-activity analysis, activity files/detection, training plans, workout recommendations, integrations, subscription/account, resting/max physiology, and exports
+- **42 MCP tools** for profile, activities, breathing data, VE thresholds, compact per-activity analysis, dashboard-labeled ventilation streams, interval stats, activity files/detection, training plans, workout recommendations, integrations, subscription/account, resting/max physiology, and exports
 - **Secure credential storage** via system keyring (macOS Keychain / Windows Credential Manager) with AES-256-GCM encrypted file fallback
 - **Auto-authentication** with token caching and automatic re-auth on expiry
 - **Smart breathing data** with summary, window, and full modes to avoid context overflow
 - **Per-activity insights** (`tw_get_activity_insights`): detected VT1/VT2/VO2max with measured power-at-threshold, confidence scores, a truncated-test flag, and per-zone time/calories — in one call, no FIT parsing
-- **Compact activity analysis** (`tw_get_activity_analysis`): reconciled timestamps, labeled summary and capability states, per-channel processed/new-processed/FIT fallback, deterministic elapsed-second merging, and pagination
+- **Compact activity analysis** (`tw_get_activity_analysis`): reconciled timestamps, labeled summary and capability states, per-channel processed/new-processed/FIT fallback, deterministic elapsed-second merging, and pagination. Tymewear's FIT units `vol/min`, `brpm`, and `vol/br` are accepted as the dashboard series
+- **Dashboard ventilation stream** (`tw_get_activity_stream`): VE, BR, TV, HR, power, and cadence with dashboard unit labels, an elapsed window, smoothing, and downsampling
+- **Interval stats** (`tw_get_activity_intervals`): avg/min/max/end for explicit intervals, FIT laps, or power work/recovery segments
 - **Slim activity payloads**: `tw_get_activity` and `tw_get_activity_workout_zone_detection` drop multi-MB per-second arrays by default (opt back in with `include=[...]`)
 - **Public Streamable HTTP mode** with static-bearer or OAuth auth (one-click claude.ai connector), single-tenant to the operator's Tyme Wear account
 
@@ -225,6 +227,7 @@ Public tool errors are stable and do not echo upstream exception text:
 |------|-------------|
 | `tw_auth_status` | Check authentication status and token validity |
 | `tw_get_profile` | Get athlete profile: weight, height, VE targets (VT1, BP, VT2, VO2max) per sport, subscription status, external accounts |
+| `tw_get_ve_targets` | Dashboard thresholds per sport: VT1/VT2/BP/VO2max power (W), minute volume (vol/min), and heart rate (bpm). VE is stored on the profile. HR and power are filled from profile fields or the pinned activity's workout-zone detection |
 | `tw_update_profile` | Update profile fields (weight, height, units) |
 
 ### Activities
@@ -233,7 +236,9 @@ Public tool errors are stable and do not echo upstream exception text:
 |------|-------------|
 | `tw_get_activities` | List activities with cursor pagination and website filters for sports, activity types, search, user ID, and pro team |
 | `tw_get_activity` | Full activity detail: duration, thresholds, zones, TSS, firmware, third-party links. Heavy arrays are summarised by default. Local stdio callers may use `include=[...]`; public mode still returns projected compact data |
-| `tw_get_activity_analysis` | Compact read-only analysis with reconciled timestamps, summary, breakpoints, explicit capabilities, per-channel source/unit/coverage/provenance, and samples merged before pagination. `include_location=true` opts into analytic sample coordinates only |
+| `tw_get_activity_analysis` | Compact read-only analysis with reconciled timestamps, summary, breakpoints, explicit capabilities, per-channel source/unit/coverage/provenance, and samples merged before pagination. FIT `vol/min`, `brpm`, and `vol/br` are usable ventilation channels. `include_location=true` opts into analytic sample coordinates only |
+| `tw_get_activity_stream` | Dashboard-labeled VE (vol/min), BR (brpm), TV (vol/breath), HR, power, and cadence. Supports an elapsed window, centered smoothing, and bucket downsampling. Summary min/avg/max are computed before smoothing |
+| `tw_get_activity_intervals` | Avg/min/max/end VE, BR, TV, HR, and power for explicit intervals and/or FIT laps or power-based work/recovery segments |
 | `tw_get_activity_insights` | Compact per-activity report: VT1/VT2/Endurance VE+HR+confidence, **measured power-at-threshold**, detected breakpoint times, per-zone time/calories, quality flags, a truncated-test flag, and VE targets — works for tests and rides |
 | `tw_get_activity_status` | Algorithm processing status for an activity |
 | `tw_pin_activity` | Pin/unpin an activity for threshold detection |
@@ -244,8 +249,20 @@ Public tool errors are stable and do not echo upstream exception text:
 
 | Tool | Description |
 |------|-------------|
-| `tw_get_processed_data` | Local-only per-second breathing time-series with summary, window, and full modes; public mode uses `tw_get_activity_analysis` instead |
-| `tw_get_new_processed_data` | Local-only new-format processed data when available; public mode uses `tw_get_activity_analysis` instead |
+| `tw_get_processed_data` | Local-only per-second breathing time-series with summary, window, and full modes; public mode uses `tw_get_activity_stream` or `tw_get_activity_analysis` instead |
+| `tw_get_new_processed_data` | Local-only new-format processed data when available; public mode uses `tw_get_activity_stream` or `tw_get_activity_analysis` instead |
+
+### Ventilation units
+
+The dashboard draws three breathing traces. `tw_get_activity_stream` uses those labels:
+
+| Channel | Dashboard label | Unit | How to read it |
+|---------|-----------------|------|----------------|
+| VE | Minute Volume | `vol/min` | Same number as L/min. 80.7 vol/min is 80.7 L/min |
+| BR | Breathing rate | `brpm` | Breaths per minute |
+| TV | Tidal volume | `vol/breath` | Dashboard volume per breath. `VE ≈ BR × TV / 100`, so 100 vol is about 1 L. A hard rep at 258–307 vol/breath is about 2.6–3.1 L |
+
+FIT developer fields arrive as `tyme_minute_volume` (`vol/min`), `tyme_breath_rate` (`brpm`), and `tyme_tidal_volume` (`vol/br`). Those strings used to be rejected as `unit_conflict`, which dropped every sample. They are now accepted at scale 1, so the stream matches the dashboard numbers. A processed series whose tidal volume is already in litres is multiplied by 100 before it is labeled `vol/breath`. If a channel is genuinely absent, the response says so (`requested_channel_not_available` or `unrecognized_unit` plus `detail`) instead of reporting a unit conflict with an empty series.
 
 ### Activity Files & Detection
 
@@ -283,7 +300,7 @@ Public tool errors are stable and do not echo upstream exception text:
 
 | Tool | Description |
 |------|-------------|
-| `tw_get_ve_targets` | Current VE targets (VT1, BP, VT2, VO2max) per sport |
+| `tw_get_ve_targets` | Dashboard VT1/VT2/BP/VO2max targets: power (W), VE (vol/min), and HR (bpm). The legacy `bike`/`running` maps remain VE-only |
 | `tw_compute_power_at_threshold` | Join an external power series (`[[t_seconds, watts], ...]`) to detected breakpoint times → mean watts at VT1/VT2/VO2max/FatMax. A cross-check/backfill for the power Tyme Wear already records |
 | `tw_get_zone_distribution` | Zone time distribution across activities |
 | `tw_tag_threshold` | Tag a ventilatory threshold (vt1, vt2, bp, vo2max) from a specific activity |
@@ -332,7 +349,7 @@ Once configured, you can ask Claude things like:
 tymewear-mcp/
 ├── src/tymewear_mcp/
 │   ├── cli.py              # CLI entry point
-│   ├── server.py           # MCP server + 40 tool registrations
+│   ├── server.py           # MCP server + 42 tool registrations
 │   ├── public.py           # Public Streamable HTTP server + bearer/OAuth auth
 │   ├── auth/               # Credential storage (keyring → encrypted → env) + OIDC verifier (oidc.py)
 │   ├── client/             # Async HTTP client + Pydantic models

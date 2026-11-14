@@ -20,6 +20,7 @@ from tymewear_mcp.tools.fit_timeseries import MAX_PAGE_SIZE, decode_fit_timeseri
 from tymewear_mcp.tools.profile import get_profile
 from tymewear_mcp.tools.threshold_analysis import extract_activity_insights
 from tymewear_mcp.tools.timestamps import reconcile_activity_timestamp
+from tymewear_mcp.tools.ventilation_units import field_default_unit, resolve_source_unit
 
 MAX_ANALYSIS_PAGE_SIZE = 1000
 DURATION_TOLERANCE_SECONDS = 2
@@ -29,6 +30,7 @@ _CHANNEL_ALIASES = {
     "ve": "ventilation",
     "ventilation": "ventilation",
     "minute_ventilation": "ventilation",
+    "minute_volume": "ventilation",
     "tyme_minute_volume": "ventilation",
     "hr": "heart_rate",
     "heart_rate": "heart_rate",
@@ -37,6 +39,7 @@ _CHANNEL_ALIASES = {
     "br": "breathing_rate",
     "breathing_rate": "breathing_rate",
     "respiratory_rate": "breathing_rate",
+    "breath_rate": "breathing_rate",
     "tyme_breath_rate": "breathing_rate",
     "tv": "tidal_volume",
     "tidal_volume": "tidal_volume",
@@ -61,6 +64,12 @@ _CANONICAL_UNITS: dict[str, str | None] = {
     "temperature": "C",
     "position_lat": "semicircles",
     "position_long": "semicircles",
+}
+# When one channel arrives in more than one accepted unit, keep the dashboard unit.
+_PREFERRED_CANONICAL: dict[str, tuple[str, ...]] = {
+    "ventilation": ("L/min",),
+    "breathing_rate": ("breaths/min",),
+    "tidal_volume": ("vol/breath", "L"),
 }
 _LOCATION_FIELDS = frozenset(
     {
@@ -349,37 +358,45 @@ def _source_records(result: dict[str, Any]) -> list[dict[str, Any]]:
     return [cast(dict[str, Any], record) for record in data if isinstance(record, dict)]
 
 
+def _blank_unit_issue(canonical: str, issue: str, declared_unit: str | None = None) -> dict[str, Any]:
+    return {
+        "source_unit": None,
+        "canonical_unit": _CANONICAL_UNITS.get(canonical),
+        "scale": None,
+        "unit_issue": issue,
+        "declared_unit": declared_unit,
+    }
+
+
 def _source_channel_metadata(result: dict[str, Any], raw_field: str, canonical: str) -> dict[str, Any]:
     inventory = result.get("channels")
     metadata = inventory.get(raw_field) if isinstance(inventory, dict) else None
     metadata = metadata if isinstance(metadata, dict) else {}
     expected_unit = _CANONICAL_UNITS.get(canonical)
-    if not metadata:
-        return {
-            "source_unit": None,
-            "canonical_unit": expected_unit,
-            "scale": None,
-            "unit_issue": "unit_conflict",
-        }
-
-    raw_source_unit = metadata.get("source_unit")
-    raw_canonical_unit = metadata.get("canonical_unit")
-    raw_scale = metadata.get("scale")
+    raw_source_unit = metadata.get("source_unit") if metadata else None
+    raw_canonical_unit = metadata.get("canonical_unit") if metadata else None
+    raw_scale = metadata.get("scale") if metadata else None
     source_unit = safe_unit(raw_source_unit)
     canonical_unit = safe_unit(raw_canonical_unit)
     scale = finite_number(raw_scale, max_abs=1_000_000)
-    unsafe = (
+    unsafe = bool(metadata) and (
         (raw_source_unit is not None and source_unit is None)
         or (raw_canonical_unit is not None and canonical_unit is None)
         or (raw_scale is not None and not isinstance(scale, (int, float)))
     )
     if unsafe:
-        return {
-            "source_unit": None,
-            "canonical_unit": expected_unit,
-            "scale": None,
-            "unit_issue": "unsafe_unit_metadata",
-        }
+        return _blank_unit_issue(canonical, "unsafe_unit_metadata")
+
+    inferred = False
+    if source_unit is None and canonical_unit is None:
+        default_unit = field_default_unit(_normalized_identifier(raw_field))
+        if default_unit is not None:
+            source_unit = default_unit
+            scale = 1
+            inferred = True
+        elif not metadata:
+            issue = "unit_not_declared" if expected_unit is not None else "unit_conflict"
+            return _blank_unit_issue(canonical, issue)
 
     if expected_unit is not None:
         canonical_coordinate = (
@@ -392,15 +409,56 @@ def _source_channel_metadata(result: dict[str, Any], raw_field: str, canonical: 
         if canonical_coordinate:
             source_unit = expected_unit
             canonical_unit = expected_unit
-        verified = source_unit is not None and canonical_unit == expected_unit and scale == 1
+
+    resolved = None
+    fast_match = (
+        expected_unit is not None
+        and source_unit is not None
+        and canonical_unit == expected_unit
+        and scale == 1
+    )
+    if fast_match:
+        resolved = resolve_source_unit(canonical, source_unit, inferred=inferred)
+        if resolved is None:
+            resolved_dashboard = source_unit
+            resolved_canonical = expected_unit
+            resolved_scale = 1
+        else:
+            resolved_canonical = resolved.canonical_unit
+            resolved_dashboard = resolved.dashboard_unit
+            resolved_scale = resolved.scale
+        accepted = {
+            "source_unit": source_unit,
+            "canonical_unit": resolved_canonical,
+            "scale": resolved_scale,
+            "unit_issue": None,
+            "declared_unit": None,
+        }
+        if canonical in {"ventilation", "breathing_rate", "tidal_volume"}:
+            accepted["dashboard_unit"] = resolved_dashboard
+        return accepted
+
+    resolved = resolve_source_unit(canonical, source_unit, inferred=inferred)
+    scale_disagrees = isinstance(scale, (int, float)) and resolved is not None and scale != resolved.scale
+    if resolved is not None and not scale_disagrees:
+        accepted = {
+            "source_unit": source_unit,
+            "canonical_unit": resolved.canonical_unit,
+            "dashboard_unit": resolved.dashboard_unit,
+            "scale": resolved.scale,
+            "unit_issue": None,
+            "declared_unit": None,
+        }
+        return accepted
+
+    if expected_unit is not None and source_unit is not None:
+        issue = "unrecognized_unit"
+    elif expected_unit is not None:
+        issue = "unit_not_declared"
     else:
-        verified = False
-    return {
-        "source_unit": source_unit,
-        "canonical_unit": canonical_unit if verified else expected_unit,
-        "scale": scale if verified else None,
-        "unit_issue": None if verified else "unit_conflict",
-    }
+        issue = "unit_conflict"
+    rejected = _blank_unit_issue(canonical, issue, source_unit)
+    return rejected
 
 
 def _index_source(
@@ -435,13 +493,16 @@ def _index_source(
             canonical = _canonical_channel(raw_field)
             metadata = _source_channel_metadata(result, raw_field, canonical)
             unit_issue = metadata.pop("unit_issue")
+            declared_unit = metadata.pop("declared_unit", None)
             if isinstance(unit_issue, str):
                 issue = unit_issues.setdefault(
                     canonical,
-                    {"rejected_sample_count": 0, "reasons": set()},
+                    {"rejected_sample_count": 0, "reasons": set(), "source_units": set()},
                 )
                 issue["rejected_sample_count"] += 1
                 issue["reasons"].add(unit_issue)
+                if isinstance(declared_unit, str):
+                    issue["source_units"].add(declared_unit)
                 continue
             by_second = indexed.setdefault(canonical, {})
             if second in by_second:
@@ -464,6 +525,56 @@ def _single_value(values: Iterable[Any]) -> Any:
         if value not in unique:
             unique.append(value)
     return unique[0] if len(unique) == 1 else None
+
+
+def _channel_detail(
+    channel: str,
+    reason: str,
+    unit_issue: dict[str, Any] | None,
+    sample_count: int,
+) -> str | None:
+    if reason in {"requested_channel_not_available", "channel_not_available"} and sample_count == 0:
+        return (
+            f"No {channel} samples were found in processed data, new processed data, or the FIT export."
+        )
+    declared = sorted(
+        unit
+        for unit in (unit_issue or {}).get("source_units", set())
+        if isinstance(unit, str) and unit
+    )
+    shown = ", ".join(declared)
+    if reason == "unrecognized_unit":
+        label = shown or "the declared unit"
+        return f"{channel} samples were rejected because {label} is not a known Tymewear unit."
+    if reason == "unit_not_declared" and sample_count == 0:
+        return f"{channel} samples had no unit declaration, so none were returned."
+    if reason == "unit_conflict" and sample_count == 0:
+        if shown:
+            return f"{channel} samples were rejected because {shown} conflicts with the channel unit."
+        return f"{channel} samples were rejected because their units could not be combined."
+    return None
+
+
+def _keep_one_canonical(selected_values: dict[str, dict[int, dict[str, Any]]]) -> bool:
+    """Drop a second accepted unit so litres and dashboard vol/breath are not mixed."""
+    dropped = False
+    for channel, by_second in selected_values.items():
+        present: list[str] = []
+        for candidate in by_second.values():
+            unit = candidate.get("canonical_unit")
+            if isinstance(unit, str) and unit not in present:
+                present.append(unit)
+        if len(present) <= 1:
+            continue
+        preferred = next(
+            (unit for unit in _PREFERRED_CANONICAL.get(channel, ()) if unit in present),
+            present[0],
+        )
+        for second in list(by_second):
+            if by_second[second].get("canonical_unit") != preferred:
+                del by_second[second]
+                dropped = True
+    return dropped
 
 
 def _channel_metadata(
@@ -501,9 +612,21 @@ def _channel_metadata(
     selected_source = sources[0] if len(sources) == 1 else "mixed" if sources else None
     issue_reasons = unit_issue.get("reasons", set()) if unit_issue else set()
     state: AvailabilityState
-    if issue_reasons:
+    if "unsafe_unit_metadata" in issue_reasons:
         state = "partial"
-        reason = "unsafe_unit_metadata" if "unsafe_unit_metadata" in issue_reasons else "unit_conflict"
+        reason = "unsafe_unit_metadata"
+    elif issue_reasons and sample_count:
+        state = "partial"
+        reason = "unit_conflict"
+    elif issue_reasons == {"unrecognized_unit"}:
+        state = "partial"
+        reason = "unrecognized_unit"
+    elif issue_reasons == {"unit_not_declared"}:
+        state = "partial"
+        reason = "unit_not_declared"
+    elif issue_reasons:
+        state = "partial"
+        reason = "unit_conflict"
     elif not sources:
         state = "unavailable"
         reason = "requested_channel_not_available" if requested else "channel_not_available"
@@ -539,6 +662,14 @@ def _channel_metadata(
             "source": selected_source if selected_source not in {None, "mixed"} else "activity_analysis",
         },
     }
+    dashboard_unit = (
+        _single_value(candidate.get("dashboard_unit") for candidate in selected.values()) if selected else None
+    )
+    if isinstance(dashboard_unit, str):
+        metadata["dashboard_unit"] = dashboard_unit
+    detail = _channel_detail(channel, reason, unit_issue, sample_count)
+    if detail is not None:
+        metadata["detail"] = detail
     if unit_issue:
         metadata["rejected_unit_sample_count"] = unit_issue.get("rejected_sample_count", 0)
     if accepted_tail_count:
@@ -572,9 +703,13 @@ def _merge_sources(
         negative_count += negative
         after_duration_count += after_duration
         for channel, issue in source_unit_issues.items():
-            combined = unit_issues.setdefault(channel, {"rejected_sample_count": 0, "reasons": set()})
+            combined = unit_issues.setdefault(
+                channel,
+                {"rejected_sample_count": 0, "reasons": set(), "source_units": set()},
+            )
             combined["rejected_sample_count"] += issue["rejected_sample_count"]
             combined["reasons"].update(issue["reasons"])
+            combined["source_units"].update(issue.get("source_units", set()))
 
     available_channels = {channel for index in indexes.values() for channel in index} | set(unit_issues)
     if requested_channels is None:
@@ -595,6 +730,9 @@ def _merge_sources(
                     by_second[second] = candidate
                     break
         selected_values[channel] = by_second
+
+    if _keep_one_canonical(selected_values):
+        timeline = sorted({second for values in selected_values.values() for second in values})
 
     expected_count = int(round(duration_seconds)) if duration_seconds is not None else len(timeline)
     duration_bounded = duration_seconds is not None
@@ -1041,6 +1179,31 @@ def _insights_capability(detail: dict[str, Any], wzd: dict[str, Any]) -> dict[st
     return {"state": "unavailable", "reason": "insight_sources_unavailable", "source": "activity_analysis"}
 
 
+def _safe_laps(fit: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_laps = fit.get("laps")
+    if not isinstance(raw_laps, list):
+        return []
+    laps: list[dict[str, Any]] = []
+    for entry in raw_laps:
+        if not isinstance(entry, dict):
+            continue
+        start = finite_number(entry.get("start_seconds"))
+        end = finite_number(entry.get("end_seconds"))
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            continue
+        lap: dict[str, Any] = {
+            "start_seconds": int(start),
+            "end_seconds": int(end),
+            "source": "fit_lap",
+        }
+        for key in ("avg_power_w", "max_power_w"):
+            value = finite_number(entry.get(key))
+            if isinstance(value, (int, float)):
+                lap[key] = value
+        laps.append(lap)
+    return laps
+
+
 async def tw_get_activity_analysis(
     client: TymeClient,
     activity_id: str,
@@ -1048,9 +1211,17 @@ async def tw_get_activity_analysis(
     limit: int = 500,
     channels: list[str] | None = None,
     include_location: bool = False,
+    *,
+    unpaged: bool = False,
 ) -> dict[str, Any]:
     """Compose activity detail, WZD summaries and fallback raw channels."""
-    normalized_channels = _validate_inputs(offset, limit, channels, include_location)
+    if unpaged:
+        normalized_channels = _validate_inputs(0, 1, channels, False)
+        offset = 0
+        limit = 1_000_000_000
+        include_location = False
+    else:
+        normalized_channels = _validate_inputs(offset, limit, channels, include_location)
     calls: tuple[Awaitable[Any], ...] = (
         get_activity(client, activity_id),
         get_profile(client),
@@ -1155,6 +1326,7 @@ async def tw_get_activity_analysis(
         "summary": summary,
         "breakpoints": _safe_breakpoints(insights.get("breakpoints")),
         "channels": channel_metadata,
+        "laps": _safe_laps(fit),
         "raw_samples": raw_samples,
         "capabilities": capabilities,
         "merge_policy": {

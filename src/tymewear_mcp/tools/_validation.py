@@ -107,6 +107,97 @@ class GetActivityAnalysisInput(ActivityIdMixin):
         return value
 
 
+class IntervalSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    start_seconds: StrictInt = Field(ge=0)
+    end_seconds: StrictInt = Field(ge=0)
+    label: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9 _.:-]{1,64}$")
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> IntervalSpec:
+        if self.end_seconds < self.start_seconds:
+            raise ValueError("end_seconds must be greater than or equal to start_seconds")
+        return self
+
+
+class GetActivityStreamInput(ActivityIdMixin):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    activity_id: str = Field(description="Activity UUID")
+    start_seconds: StrictInt = Field(default=0, ge=0, description="Inclusive window start, elapsed seconds")
+    end_seconds: StrictInt | None = Field(
+        default=None,
+        ge=0,
+        description="Inclusive window end, elapsed seconds. Omit for the rest of the activity.",
+    )
+    sample_period_seconds: StrictInt = Field(
+        default=1,
+        ge=1,
+        le=300,
+        description="Downsample by averaging each bucket of this many seconds",
+    )
+    smoothing_seconds: StrictInt = Field(
+        default=0,
+        ge=0,
+        le=300,
+        description="Centered moving-average window in seconds. 0 or 1 leaves samples unsmoothed.",
+    )
+    offset: StrictInt = Field(default=0, ge=0)
+    limit: StrictInt = Field(default=500, ge=1, le=2000)
+    channels: list[AnalysisChannel] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=6,
+        description="Subset of ventilation, breathing_rate, tidal_volume, heart_rate, power, cadence",
+    )
+
+    @model_validator(mode="after")
+    def validate_window_and_channels(self) -> GetActivityStreamInput:
+        if self.end_seconds is not None and self.end_seconds < self.start_seconds:
+            raise ValueError("end_seconds must be greater than or equal to start_seconds")
+        if self.channels is not None:
+            from tymewear_mcp.tools.activity_stream import canonicalize_stream_channels
+
+            self.channels = canonicalize_stream_channels(self.channels)
+        return self
+
+
+class GetActivityIntervalsInput(ActivityIdMixin):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    activity_id: str = Field(description="Activity UUID")
+    intervals: list[IntervalSpec] | None = Field(
+        default=None,
+        max_length=100,
+        description="Explicit elapsed-second intervals. Each needs start_seconds and end_seconds.",
+    )
+    detect: Literal["none", "laps", "power"] = Field(
+        default="none",
+        description="Also detect FIT laps or power work/recovery segments",
+    )
+    work_power_w: StrictInt | None = Field(
+        default=None,
+        ge=0,
+        le=3000,
+        description="Power at or above this value is work when detect is power",
+    )
+    min_segment_seconds: StrictInt = Field(
+        default=30,
+        ge=1,
+        le=3600,
+        description="Shortest auto-detected work or recovery segment",
+    )
+
+    @model_validator(mode="after")
+    def require_a_source(self) -> GetActivityIntervalsInput:
+        if self.detect == "none" and not self.intervals:
+            raise ValueError("pass intervals or set detect to laps or power")
+        if self.detect == "power" and self.work_power_w is None:
+            raise ValueError("work_power_w is required when detect is power")
+        return self
+
+
 class ComputePowerAtThresholdInput(ActivityIdMixin):
     activity_id: str = Field(description="Tyme Wear activity UUID to read detected threshold times from")
     power_samples: list[list[float | None]] = Field(

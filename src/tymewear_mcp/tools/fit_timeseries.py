@@ -12,6 +12,7 @@ from typing import Any, cast
 from garmin_fit_sdk import Decoder, Stream
 
 from tymewear_mcp.tools._availability import availability_envelope, feature_available
+from tymewear_mcp.tools.ventilation_units import field_default_unit, resolve_developer_field
 
 MAX_COMPRESSED_FIT_BYTES = 16 * 1024 * 1024
 MAX_DECOMPRESSED_FIT_BYTES = 64 * 1024 * 1024
@@ -30,11 +31,37 @@ _STANDARD_UNITS: dict[str, str | None] = {
     "position_lat": "semicircles",
     "position_long": "semicircles",
 }
-_DEVELOPER_CANONICAL_UNITS: dict[str, str] = {
-    "tyme_minute_volume": "L/min",
-    "tyme_breath_rate": "breaths/min",
-    "tyme_tidal_volume": "L",
-}
+
+
+def _lap_summaries(messages: dict[str, Any], records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    first_timestamp = next((_utc_timestamp(record.get("timestamp"))[0] for record in records), None)
+    raw_laps = messages.get("lap_mesgs", [])
+    if not isinstance(raw_laps, list) or first_timestamp is None:
+        return []
+    laps: list[dict[str, Any]] = []
+    for lap in raw_laps:
+        if not isinstance(lap, dict):
+            continue
+        start, _ = _utc_timestamp(lap.get("start_time") or lap.get("timestamp"))
+        if start is None:
+            continue
+        elapsed = int(round((start - first_timestamp).total_seconds()))
+        timer = lap.get("total_timer_time")
+        elapsed_time = lap.get("total_elapsed_time")
+        duration = timer if isinstance(timer, (int, float)) and not isinstance(timer, bool) else elapsed_time
+        if not isinstance(duration, (int, float)) or isinstance(duration, bool) or duration < 0:
+            continue
+        summary: dict[str, Any] = {
+            "start_seconds": max(0, elapsed),
+            "end_seconds": max(0, elapsed + int(round(float(duration)))),
+            "source": "fit_lap",
+        }
+        for source_name, output_name in (("avg_power", "avg_power_w"), ("max_power", "max_power_w")):
+            value = lap.get(source_name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                summary[output_name] = value
+        laps.append(summary)
+    return laps
 
 
 def _validate_paging(offset: int, limit: int) -> None:
@@ -156,6 +183,7 @@ def _channel_inventory(
     inventory: dict[str, dict[str, Any]] = {}
     for channel in channels:
         developer_field = developer_fields.get(channel)
+        dashboard_unit: str | None = None
         if developer_field is None:
             source_field = channel
             source_unit = _STANDARD_UNITS.get(channel)
@@ -163,17 +191,16 @@ def _channel_inventory(
             scale: int | None = 1
         else:
             source_field, source_unit = developer_field
-            expected_unit = _DEVELOPER_CANONICAL_UNITS.get(source_field)
-            if (
-                expected_unit is not None
-                and source_unit is not None
-                and source_unit.casefold() == expected_unit.casefold()
-            ):
-                canonical_unit = expected_unit
-                scale = 1
-            else:
+            resolved = resolve_developer_field(source_field, source_unit)
+            if resolved is None:
                 canonical_unit = None
                 scale = None
+            else:
+                canonical_unit = resolved.canonical_unit
+                scale = resolved.scale
+                dashboard_unit = resolved.dashboard_unit
+                if resolved.inferred and source_unit is None:
+                    source_unit = field_default_unit(source_field)
         sample_count = sum(sample.get(channel) is not None for sample in data)
         channel_metadata: dict[str, Any] = {
             "source_unit": source_unit,
@@ -189,6 +216,8 @@ def _channel_inventory(
                 "state": "unverified",
                 "reason": "source_unit_not_canonical",
             }
+        if developer_field is not None and dashboard_unit is not None:
+            channel_metadata["dashboard_unit"] = dashboard_unit
         inventory[channel] = channel_metadata
     return inventory
 
@@ -213,6 +242,7 @@ def normalize_fit_messages(
     records = _record_messages(messages)
     descriptions = _developer_descriptions(messages, records)
     data = _normalized_records(records, descriptions, include_location=include_location)
+    laps = _lap_summaries(messages, records)
     if not valid_fit or (warnings and not data):
         availability = availability_envelope(
             state="unavailable",
@@ -240,6 +270,7 @@ def normalize_fit_messages(
         "has_more": next_offset is not None,
         "next_offset": next_offset,
         "channels": _channel_inventory(data, descriptions),
+        "laps": laps,
         "decoder_warnings": warnings,
         "data": page,
     }

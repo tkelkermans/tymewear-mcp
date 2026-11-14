@@ -529,6 +529,7 @@ async def test_requested_missing_channel_is_explicit_and_not_inferred_from_other
             "reason": "requested_channel_not_available",
             "source": "activity_analysis",
         },
+        "detail": "No heart_rate samples were found in processed data, new processed data, or the FIT export.",
     }
     assert result["summary"]["raw_channel_completeness"]["channels"]["heart_rate"]["state"] == "unknown"
 
@@ -930,3 +931,172 @@ def test_nested_threshold_metrics_and_breakpoints_use_safe_projection() -> None:
     }
     assert private_url not in repr(thresholds)
     assert private_url not in repr(breakpoints)
+
+
+def test_dashboard_fit_units_are_accepted_without_rescaling() -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+    raw_samples, channels = module._merge_sources(
+        {
+            "processed_data": {"data": [], "channels": {}},
+            "new_processed_data": {"data": [], "channels": {}},
+            "fit_export": {
+                "data": [
+                    {
+                        "elapsed_seconds": 899,
+                        "tyme_minute_volume": 96.7,
+                        "tyme_breath_rate": 38.8,
+                        "tyme_tidal_volume": 255.4,
+                    }
+                ],
+                "channels": {
+                    "tyme_minute_volume": {"source_unit": "vol/min", "canonical_unit": None, "scale": None},
+                    "tyme_breath_rate": {"source_unit": "brpm", "canonical_unit": None, "scale": None},
+                    "tyme_tidal_volume": {"source_unit": "vol/br", "canonical_unit": None, "scale": None},
+                },
+            },
+        },
+        duration_seconds=3672,
+        requested_channels=["ventilation", "breathing_rate", "tidal_volume"],
+        include_location=False,
+        offset=0,
+        limit=10,
+    )
+
+    assert raw_samples["data"] == [
+        {
+            "elapsed_seconds": 899,
+            "ventilation": 96.7,
+            "breathing_rate": 38.8,
+            "tidal_volume": 255.4,
+        }
+    ]
+    assert channels["ventilation"]["availability"]["reason"] == "channel_samples_have_gaps"
+    assert channels["ventilation"]["canonical_unit"] == "L/min"
+    assert channels["ventilation"]["dashboard_unit"] == "vol/min"
+    assert channels["ventilation"]["scale"] == 1
+    assert channels["breathing_rate"]["canonical_unit"] == "breaths/min"
+    assert channels["breathing_rate"]["dashboard_unit"] == "brpm"
+    assert channels["tidal_volume"]["canonical_unit"] == "vol/breath"
+    assert channels["tidal_volume"]["dashboard_unit"] == "vol/breath"
+    assert "rejected_unit_sample_count" not in channels["ventilation"]
+
+
+def test_unrecognized_unit_names_the_unit_when_nothing_is_usable() -> None:
+    module = importlib.import_module("tymewear_mcp.tools.activity_analysis")
+    raw_samples, channels = module._merge_sources(
+        {
+            "processed_data": {
+                "data": [{"time": 0, "ve": 40.0}],
+                "channels": {"ve": {"source_unit": "furlongs/min", "canonical_unit": None, "scale": None}},
+            },
+            "new_processed_data": {"data": [], "channels": {}},
+            "fit_export": {"data": [], "channels": {}},
+        },
+        duration_seconds=1,
+        requested_channels=["ventilation"],
+        include_location=False,
+        offset=0,
+        limit=10,
+    )
+
+    assert raw_samples["data"] == []
+    assert channels["ventilation"]["availability"]["reason"] == "unrecognized_unit"
+    assert "furlongs/min" in channels["ventilation"]["detail"]
+    assert channels["ventilation"]["sample_count"] == 0
+
+
+def _dashboard_fit() -> bytes:
+    developer_data_id = {
+        "mesg_num": 207,
+        "developer_data_index": 0,
+        "application_id": [7] * 16,
+    }
+    descriptions = [
+        (0, "tyme_minute_volume", "vol/min"),
+        (1, "tyme_breath_rate", "brpm"),
+        (2, "tyme_tidal_volume", "vol/br"),
+    ]
+    encoder = Encoder()
+    for number, name, units in descriptions:
+        encoder.add_developer_field(
+            number,
+            developer_data_id,
+            {
+                "mesg_num": 206,
+                "developer_data_index": 0,
+                "field_definition_number": number,
+                "fit_base_type_id": 136,
+                "field_name": name,
+                "units": units,
+            },
+        )
+    encoder.write_mesg(developer_data_id)
+    for number, name, units in descriptions:
+        encoder.write_mesg(
+            {
+                "mesg_num": 206,
+                "developer_data_index": 0,
+                "field_definition_number": number,
+                "fit_base_type_id": 136,
+                "field_name": name,
+                "units": units,
+            }
+        )
+    started = datetime(2026, 11, 14, 14, 7, tzinfo=timezone.utc)
+    encoder.write_mesg(
+        {
+            "mesg_num": 19,
+            "timestamp": started + timedelta(seconds=120),
+            "start_time": started,
+            "total_elapsed_time": 120.0,
+            "total_timer_time": 120.0,
+            "avg_power": 217,
+        }
+    )
+    encoder.write_mesg(
+        {
+            "mesg_num": 20,
+            "timestamp": started,
+            "heart_rate": 139,
+            "power": 217,
+            "cadence": 90,
+            "developer_fields": {0: 80.7, 1: 38.6, 2: 209.6},
+        }
+    )
+    encoder.write_mesg(
+        {
+            "mesg_num": 20,
+            "timestamp": started + timedelta(seconds=1),
+            "heart_rate": 140,
+            "power": 220,
+            "cadence": 91,
+            "developer_fields": {0: 96.7, 1: 38.8, 2: 255.4},
+        }
+    )
+    return encoder.close()
+
+
+async def test_dashboard_fit_units_reach_the_stream() -> None:
+    from tymewear_mcp.tools.activity_stream import tw_get_activity_intervals, tw_get_activity_stream
+
+    client = ReadOnlyClient(
+        activity=_activity(duration_seconds=2),
+        processed=[],
+        new_processed=[],
+        fit=_dashboard_fit(),
+    )
+    stream = await tw_get_activity_stream(client, ACTIVITY_ID, limit=10)
+    intervals = await tw_get_activity_intervals(client, ACTIVITY_ID, detect="laps")
+
+    assert stream["availability"]["state"] == "available"
+    assert stream["summary"]["ventilation"]["min"] == pytest.approx(80.7, abs=0.05)
+    assert stream["summary"]["ventilation"]["max"] == pytest.approx(96.7, abs=0.05)
+    assert stream["summary"]["tidal_volume"]["max"] == pytest.approx(255.4, abs=0.05)
+    assert stream["summary"]["heart_rate"]["min"] == pytest.approx(139, abs=0.05)
+    assert stream["summary"]["power"]["min"] == pytest.approx(217, abs=0.05)
+    assert stream["samples"][1]["breathing_rate"] == pytest.approx(38.8, abs=0.05)
+    assert stream["samples"][1]["tidal_volume"] == pytest.approx(255.4, abs=0.05)
+    assert stream["channels"]["ventilation"]["availability"]["reason"] == "channel_data_available"
+    assert intervals["intervals"][0]["source"] == "fit_lap"
+    assert intervals["intervals"][0]["end_seconds"] == 120
+    assert intervals["intervals"][0]["stats"]["ventilation"]["sample_count"] == 2

@@ -315,6 +315,7 @@ class TestDecodeFitTimeseries:
             "expected_count": 2,
             "coverage_pct": 100.0,
             "provenance": {"source": "fit_export", "field": "tyme_minute_volume"},
+            "dashboard_unit": "vol/min",
         }
         assert "position_lat" not in result["data"][0]
         assert "position_long" not in result["data"][0]
@@ -385,13 +386,43 @@ class TestDecodeFitTimeseries:
         assert included["channels"]["developer_position_lat"]["source_unit"] == "degrees"
         assert included["channels"]["latitude"]["source_unit"] == "degrees"
 
-    def test_unverified_developer_unit_does_not_claim_canonical_conversion(self):
+    def test_dashboard_tidal_volume_unit_is_vol_per_breath(self):
         mod = _fit_timeseries_module()
         normalize = getattr(mod, "normalize_fit_messages", None)
         assert normalize is not None
         messages = {
             "field_description_mesgs": [
                 {"key": 0, "field_name": "tyme_tidal_volume", "units": "vol/br"},
+            ],
+            "record_mesgs": [
+                {
+                    "timestamp": datetime(2026, 8, 9, 10, 31, 35, tzinfo=timezone.utc),
+                    "developer_fields": {0: 255.4},
+                }
+            ],
+        }
+
+        result = normalize(messages, decoder_warnings=[])
+
+        assert result["data"][0]["tyme_tidal_volume"] == 255.4
+        assert result["channels"]["tyme_tidal_volume"] == {
+            "source_unit": "vol/br",
+            "canonical_unit": "vol/breath",
+            "scale": 1,
+            "sample_count": 1,
+            "expected_count": 1,
+            "coverage_pct": 100.0,
+            "provenance": {"source": "fit_export", "field": "tyme_tidal_volume"},
+            "dashboard_unit": "vol/breath",
+        }
+
+    def test_unknown_developer_unit_stays_unverified(self):
+        mod = _fit_timeseries_module()
+        normalize = getattr(mod, "normalize_fit_messages", None)
+        assert normalize is not None
+        messages = {
+            "field_description_mesgs": [
+                {"key": 0, "field_name": "tyme_tidal_volume", "units": "smoots"},
             ],
             "record_mesgs": [
                 {
@@ -403,15 +434,11 @@ class TestDecodeFitTimeseries:
 
         result = normalize(messages, decoder_warnings=[])
 
-        assert result["channels"]["tyme_tidal_volume"] == {
-            "source_unit": "vol/br",
-            "canonical_unit": None,
-            "scale": None,
-            "sample_count": 1,
-            "expected_count": 1,
-            "coverage_pct": 100.0,
-            "provenance": {"source": "fit_export", "field": "tyme_tidal_volume"},
-            "conversion": {"state": "unverified", "reason": "source_unit_not_canonical"},
+        assert result["channels"]["tyme_tidal_volume"]["canonical_unit"] is None
+        assert result["channels"]["tyme_tidal_volume"]["scale"] is None
+        assert result["channels"]["tyme_tidal_volume"]["conversion"] == {
+            "state": "unverified",
+            "reason": "source_unit_not_canonical",
         }
 
     def test_accepts_gzip_fit_payload(self):
