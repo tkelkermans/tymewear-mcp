@@ -19,6 +19,7 @@ from tymewear_mcp.tools import account as account_mod
 from tymewear_mcp.tools import activities as activities_mod
 from tymewear_mcp.tools import activity_analysis as activity_analysis_mod
 from tymewear_mcp.tools import activity_files as activity_files_mod
+from tymewear_mcp.tools import activity_stream as activity_stream_mod
 from tymewear_mcp.tools import auth_status as auth_status_mod
 from tymewear_mcp.tools import breathing_data as breathing_data_mod
 from tymewear_mcp.tools import exports as exports_mod
@@ -38,6 +39,8 @@ from tymewear_mcp.tools._validation import (
     GetActivityAnalysisInput,
     GetActivityDetailInput,
     GetActivityInput,
+    GetActivityIntervalsInput,
+    GetActivityStreamInput,
     GetProcessedDataInput,
     IntegrationInput,
     RespondMaxValueInput,
@@ -241,9 +244,30 @@ def _registered_tools() -> list[Tool]:
             description=(
                 "Get a compact, read-only activity analysis with reconciled timestamps, labeled summaries, "
                 "per-channel processed/FIT fallback samples, explicit capability states, and pagination. "
-                "Analytic sample coordinates require include_location=true."
+                "Tymewear FIT units vol/min, brpm, and vol/br are accepted as dashboard minute volume, "
+                "breathing rate, and tidal volume. Analytic sample coordinates require include_location=true."
             ),
             inputSchema=GetActivityAnalysisInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_activity_stream",
+            description=(
+                "Dashboard-labeled per-second series for one activity: minute volume (VE, vol/min), "
+                "breathing rate (BR, brpm), tidal volume (TV, vol/breath), heart rate, power, and cadence. "
+                "Optional elapsed window, centered smoothing, and bucket downsampling. "
+                "Summary min/avg/max use the unsmoothed window. TV 100 vol/breath is about 1 L "
+                "(VE ≈ BR × TV / 100)."
+            ),
+            inputSchema=GetActivityStreamInput.model_json_schema(),
+        ),
+        Tool(
+            name="tw_get_activity_intervals",
+            description=(
+                "Avg/min/max/end VE, BR, TV, HR, and power for explicit elapsed intervals and/or "
+                "auto-detected FIT laps or power work/recovery segments. "
+                "Units match the dashboard: vol/min, brpm, vol/breath, bpm, W."
+            ),
+            inputSchema=GetActivityIntervalsInput.model_json_schema(),
         ),
         Tool(
             name="tw_get_activity_status",
@@ -281,7 +305,12 @@ def _registered_tools() -> list[Tool]:
         ),
         Tool(
             name="tw_get_ve_targets",
-            description="Get current VE threshold targets (VT1, BP, VT2, VO2max) per sport for the athlete.",
+            description=(
+                "Athlete ventilatory thresholds as the dashboard shows them: VT1/VT2/BP/VO2max "
+                "power (W), minute volume (vol/min, same number as L/min), and heart rate (bpm) per sport. "
+                "VE comes from the profile. HR and power come from profile fields when present, "
+                "otherwise from the pinned activity's workout-zone detection."
+            ),
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
@@ -526,6 +555,31 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 include_location=params.include_location,
             )
 
+        elif name == "tw_get_activity_stream":
+            params = GetActivityStreamInput.model_validate(arguments)
+            result = await activity_stream_mod.tw_get_activity_stream(
+                client,
+                params.activity_id,
+                start_seconds=params.start_seconds,
+                end_seconds=params.end_seconds,
+                sample_period_seconds=params.sample_period_seconds,
+                smoothing_seconds=params.smoothing_seconds,
+                offset=params.offset,
+                limit=params.limit,
+                channels=params.channels,
+            )
+
+        elif name == "tw_get_activity_intervals":
+            params = GetActivityIntervalsInput.model_validate(arguments)
+            result = await activity_stream_mod.tw_get_activity_intervals(
+                client,
+                params.activity_id,
+                intervals=[interval.model_dump() for interval in params.intervals] if params.intervals else None,
+                detect=params.detect,
+                work_power_w=params.work_power_w,
+                min_segment_seconds=params.min_segment_seconds,
+            )
+
         elif name == "tw_get_activity_status":
             params = GetActivityInput.model_validate(arguments)
             result = await activities_mod.get_activity_status(client, params.activity_id)
@@ -557,8 +611,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await breathing_data_mod.get_new_processed_data(client, params.activity_id)
 
         elif name == "tw_get_ve_targets":
-            profile = await profile_mod.get_profile(client)
-            result = thresholds_mod.get_ve_targets(profile)
+            result = await thresholds_mod.get_athlete_thresholds(client)
 
         elif name == "tw_get_activity_insights":
             params = GetActivityInput.model_validate(arguments)
